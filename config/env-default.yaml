@@ -1,0 +1,12 @@
+type: development
+port: 8000
+serverAddress: ""
+useHttps: true
+httpsInfos:
+  cert: /Users/lucamorino/Documents/GitHub/localhost+5.pem
+  key: /Users/lucamorino/Documents/GitHub/localhost+5-key.pem
+baseUrl: ""
+auth:
+  clients: []
+  login: ""
+  password: ""
