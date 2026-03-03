@@ -281,7 +281,7 @@ async function main($container) {
     const safeCollisionDistance = Number.isFinite(collisionDistance) ? collisionDistance : 3;
     const safeProximityOffset = Number.isFinite(proximityOffset) ? proximityOffset : 10;
     const safeCollisionDriftStrength = Number.isFinite(collisionDriftStrength)
-      ? Math.max(0, Math.min(1, collisionDriftStrength))
+      ? Math.max(0, Math.min(5, collisionDriftStrength))
       : 0.5;
     const proximityDistance = safeCollisionDistance + safeProximityOffset;
     const resetValue = Number(global.get('reset') ?? 0);

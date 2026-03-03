@@ -83,43 +83,17 @@ async function main($container) {
   let lastControlCoords = { x: null, y: null };
   const motionUpdateInterval = 50;
   const motionFallbackDelayMs = 1500;
-  const collisionPresetMin = 6; 
-  const collisionPresetMax = 10;
   const collisionPresetResetDelayMs = 2000;
-  const collisionDriftMaxRadius = 12;
-  const collisionDriftGrowthPerSec = 1.8;
-  const collisionDriftAngularSpeed = 1.2;
-  const collisionDriftFadeDurationMs = 1200;
-  let collisionDriftStrength = 1;
   let collisionPresetResetTimeout = null;
   let motionEventReceived = false;
   let pointerDragFallbackActive = false;
   let device = null;
-  let lastInputCoords = { x: 50, y: 50 };
-  const collisionDrift = {
-    mode: 'idle',
-    startTimeMs: 0,
-    baseAngle: 0,
-    spiralDirection: 1,
-    phaseOffset: 0,
-    offsetX: 0,
-    offsetY: 0,
-    fadeStartMs: 0,
-    fadeFromX: 0,
-    fadeFromY: 0,
-    rafId: null,
-  };
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const clampCoord = (value) => clamp(Number(value), 0, 100);
-  const roundCoord = (value) => Math.round(clampCoord(value));
-  const normalizeCollisionDriftStrength = (value) => {
-    const strength = Number(value);
-    return Number.isFinite(strength) ? clamp(strength, 0, 5) : 0.5;
-  };
 
   const mapAccelToControlCoords = (accX, accY) => {
-    const maxG = 2.33;//9.81;
+    const maxG = 9.81; //8.33;//
     const safeAccX = Number.isFinite(accX) ? accX : 0;
     const safeAccY = Number.isFinite(accY) ? accY : 0;
     const normX = clamp(safeAccX / maxG, -1, 1);
@@ -189,68 +163,7 @@ async function main($container) {
     }
   };
 
-  function stopCollisionDriftLoop() {
-    if (collisionDrift.rafId !== null) {
-      cancelAnimationFrame(collisionDrift.rafId);
-      collisionDrift.rafId = null;
-    }
-  }
-
-  function getCollisionDriftOffset(now = performance.now()) {
-    if (collisionDrift.mode === 'idle') {
-      collisionDrift.offsetX = 0;
-      collisionDrift.offsetY = 0;
-      return { x: 0, y: 0 };
-    }
-
-    if (collisionDrift.mode === 'active') {
-      const elapsedSec = Math.max(0, (now - collisionDrift.startTimeMs) / 1000);
-      const radius = Math.min(collisionDriftMaxRadius, elapsedSec * collisionDriftGrowthPerSec);
-      const spiralAngle = (
-        collisionDrift.baseAngle
-        + (collisionDrift.spiralDirection * elapsedSec * collisionDriftAngularSpeed)
-        + collisionDrift.phaseOffset
-      );
-      const outwardX = Math.cos(collisionDrift.baseAngle) * radius;
-      const outwardY = Math.sin(collisionDrift.baseAngle) * radius;
-      const spiralX = Math.cos(spiralAngle) * radius;
-      const spiralY = Math.sin(spiralAngle) * radius;
-      const driftShapeX = (outwardX * 0.75) + (spiralX * 0.45);
-      const driftShapeY = (outwardY * 0.75) + (spiralY * 0.45);
-      collisionDrift.offsetX = driftShapeX * collisionDriftStrength;
-      collisionDrift.offsetY = driftShapeY * collisionDriftStrength;
-      return { x: collisionDrift.offsetX, y: collisionDrift.offsetY };
-    }
-
-    if (collisionDrift.mode === 'fading') {
-      const progress = Math.max(0, Math.min(1, (now - collisionDrift.fadeStartMs) / collisionDriftFadeDurationMs));
-      const gain = 1 - progress;
-      collisionDrift.offsetX = collisionDrift.fadeFromX * gain;
-      collisionDrift.offsetY = collisionDrift.fadeFromY * gain;
-      if (progress >= 1) {
-        collisionDrift.mode = 'idle';
-        collisionDrift.offsetX = 0;
-        collisionDrift.offsetY = 0;
-      }
-      return { x: collisionDrift.offsetX, y: collisionDrift.offsetY };
-    }
-
-    return { x: 0, y: 0 };
-  }
-
-  function computeDriftedCoords(coords, now = performance.now()) {
-    const safeCoords = {
-      x: clampCoord(coords?.x ?? 50),
-      y: clampCoord(coords?.y ?? 50),
-    };
-    const driftOffset = getCollisionDriftOffset(now);
-    return {
-      x: roundCoord(safeCoords.x + driftOffset.x),
-      y: roundCoord(safeCoords.y + driftOffset.y),
-    };
-  }
-
-  function mapCoordsToPreset(coords) {
+  /* function mapCoordsToPreset(coords) {
     const x = clampCoord(coords?.x ?? 50);
     const y = clampCoord(coords?.y ?? 50);
     const nx = ((x / 100) * 2) - 1;
@@ -285,79 +198,16 @@ async function main($container) {
       user.set({ preset: mappedPreset });
       loadPresetAtIndex(device, presets, mappedPreset);
     }
-  }
-
-  function applyCurrentInputWithDrift() {
-    const driftedCoords = computeDriftedCoords(lastInputCoords);
-    commitControlCoords(driftedCoords);
-    updatePresetFromCoords(driftedCoords);
-  }
-
-  function ensureCollisionDriftLoop() {
-    if (collisionDrift.rafId !== null) {
-      return;
-    }
-
-    const tick = () => {
-      collisionDrift.rafId = null;
-      if (collisionDrift.mode === 'idle') {
-        return;
-      }
-      applyCurrentInputWithDrift();
-      collisionDrift.rafId = requestAnimationFrame(tick);
-    };
-
-    collisionDrift.rafId = requestAnimationFrame(tick);
-  }
-
-  function startCollisionDrift() {
-    const now = performance.now();
-    const referenceX = clampCoord(lastInputCoords.x);
-    const referenceY = clampCoord(lastInputCoords.y);
-    const centerDx = referenceX - 50;
-    const centerDy = referenceY - 50;
-    const distanceFromCenter = Math.hypot(centerDx, centerDy);
-    const outwardAngle = distanceFromCenter > 1
-      ? Math.atan2(centerDy, centerDx)
-      : Math.random() * Math.PI * 2;
-
-    collisionDrift.mode = 'active';
-    collisionDrift.startTimeMs = now;
-    collisionDrift.baseAngle = outwardAngle;
-    collisionDrift.spiralDirection = Math.random() < 0.5 ? -1 : 1;
-    collisionDrift.phaseOffset = (Math.random() - 0.5) * 0.8;
-    ensureCollisionDriftLoop();
-    applyCurrentInputWithDrift();
-  }
-
-  function fadeOutCollisionDrift() {
-    const now = performance.now();
-    const currentOffset = getCollisionDriftOffset(now);
-    if (Math.abs(currentOffset.x) < 0.01 && Math.abs(currentOffset.y) < 0.01) {
-      collisionDrift.mode = 'idle';
-      stopCollisionDriftLoop();
-      applyCurrentInputWithDrift();
-      return;
-    }
-
-    collisionDrift.mode = 'fading';
-    collisionDrift.fadeStartMs = now;
-    collisionDrift.fadeFromX = currentOffset.x;
-    collisionDrift.fadeFromY = currentOffset.y;
-    ensureCollisionDriftLoop();
-    applyCurrentInputWithDrift();
-  }
+  } */
 
   const applyControlCoords = (coords) => {
     if (!coords) {
       return;
     }
-
-    lastInputCoords = {
+    commitControlCoords({
       x: clampCoord(coords.x),
       y: clampCoord(coords.y),
-    };
-    applyCurrentInputWithDrift();
+    });
   };
 
   const setPointerDragFallback = (enabled, reason = null) => {
@@ -386,7 +236,7 @@ async function main($container) {
     const z = smoothMotionValueLogarithmically(motionZHistory, rawZ);
     const coords = mapAccelToControlCoords(x, y);
     if (device) {
-      sendMessageToInport(device, 'accelerometer', [coords.x, coords.y, z]);
+      sendMessageToInport(device, 'accelerometer', [x, y, z]);
     }
     applyControlCoords(coords);
   };
@@ -444,7 +294,6 @@ async function main($container) {
   const index = checkin.getIndex();
   //const instr = checkin.getData();
   const global = await client.stateManager.attach('global');
-  collisionDriftStrength = global.get('collision_drift_strength');//normalizeCollisionDriftStrength(global.get('collision_drift_strength'));
   const user = await client.stateManager.create('user');
   const control = await client.stateManager.create('control');
   controlState = control;
@@ -514,30 +363,8 @@ async function main($container) {
       debugLog("No presets defined");
   }
 
-  function getRandomCollisionPreset(currentPreset) {
-    const min = Math.max(0, collisionPresetMin);
-    const max = Math.min(collisionPresetMax, presets.length - 1);
-
-    if (max < min) {
-      return null;
-    }
-
-    const size = max - min + 1;
-    let nextPreset = min + Math.floor(Math.random() * size);
-    const current = Math.floor(Number(currentPreset));
-
-    if (size > 1 && current >= min && current <= max && nextPreset === current) {
-      nextPreset = min + ((nextPreset - min + 1) % size);
-    }
-
-    return nextPreset;
-  }
-
-  function isReactiveCollisionPreset(value) {
-    const presetIndex = Math.floor(Number(value));
-    return Number.isFinite(presetIndex)
-      && presetIndex >= collisionPresetMin
-      && presetIndex <= collisionPresetMax;
+  function isReactiveCollisionActive() {
+    return Number(user.get('state')) > 0;
   }
 
   function clearCollisionPresetResetTimeout() {
@@ -548,12 +375,12 @@ async function main($container) {
   }
 
   function resetCollisionPresetToDefault() {
-    user.set({ preset: 0 });
-    loadPresetAtIndex(device, presets, 0);
+    const randPreset = Math.floor(Math.random() * 5);
+    user.set({ preset: randPreset });
     user.set({ state: 0 });
+    loadPresetAtIndex(device, presets, randPreset);
     sendMessageToInport(device, 'state', [0]);
     setReactiveBackground(false);
-    fadeOutCollisionDrift();
   }
 
   function scheduleCollisionPresetReset() {
@@ -568,7 +395,7 @@ async function main($container) {
         return;
       }
 
-      if (!isReactiveCollisionPreset(user.get('preset'))) {
+      if (!isReactiveCollisionActive()) {
         return;
       }
 
@@ -582,7 +409,7 @@ async function main($container) {
       return;
     }
 
-    if (isReactiveCollisionPreset(user.get('preset'))) {
+    if (isReactiveCollisionActive()) {
       scheduleCollisionPresetReset();
     }
   }
@@ -593,17 +420,9 @@ async function main($container) {
       return;
     }
 
-    const nextPreset = getRandomCollisionPreset(user.get('preset'));
-    if (!Number.isFinite(nextPreset)) {
-      return;
-    }
-
-    user.set({ preset: nextPreset });
-    loadPresetAtIndex(device, presets, nextPreset);
     user.set({ state: 1 });
     sendMessageToInport(device, 'state', [1]);
-    setReactiveBackground(isReactiveCollisionPreset(nextPreset));
-    startCollisionDrift();
+    setReactiveBackground(true);
     updateCollisionPresetResetFromProximity(Boolean(user.get('proximity')));
   }
 
@@ -629,10 +448,10 @@ async function main($container) {
   debugLog("Inports:");
   debugLog(inports);
 
-  loadPresetAtIndex(device, presets, 0);
-  debugLog('Initial preset 0 loaded');
-  sendMessageToInport(device, 'start', [1]); // ensure the patch starts in a known state
+  loadPresetAtIndex(device, presets, 1);
+  debugLog('Initial preset 1 loaded');
   sendMessageToInport(device, 'state', [0]);
+  sendMessageToInport(device, 'start', [1]); // ensure the patch starts in a known state
   control.set({ active: 1 });
 
   function stopReactiveBackgroundLoop() {
@@ -815,11 +634,6 @@ async function main($container) {
       }
       applyBackgroundMode(harshness, penalty);
     } */
-    if ('collision_drift_strength' in updates) {
-      collisionDriftStrength = updates['collision_drift_strength']//normalizeCollisionDriftStrength(updates['collision_drift_strength']);
-      applyCurrentInputWithDrift();
-      debugLog('Collision drift strength updated:', collisionDriftStrength);
-    }
     if ('reset' in updates) {
       padUi?.applyReset?.();
       debugLog('Reset received, player coordinates rotated');
@@ -834,6 +648,17 @@ async function main($container) {
       const state = Number(updates['state']);
       sendMessageToInport(device, 'state', state);
     } */
+    if ('state' in updates) {
+      const state = Number(updates['state']);
+      const isActive = state > 0;
+      sendMessageToInport(device, 'state', [isActive ? 1 : 0]);
+      setReactiveBackground(isActive);
+      if (isActive) {
+        updateCollisionPresetResetFromProximity(Boolean(user.get('proximity')));
+      } else {
+        clearCollisionPresetResetTimeout();
+      }
+    }
     if ('collide' in updates) {
       const couple = Boolean(updates['collide']);
       padUi?.setCoupled?.(couple);
@@ -850,14 +675,6 @@ async function main($container) {
       const newPreset = updates['preset'];
       debugLog('Preset updated:', newPreset);
       //loadPresetAtIndex(device, presets, newPreset);
-      const isReactivePreset = isReactiveCollisionPreset(newPreset);
-      setReactiveBackground(isReactivePreset);
-      if (isReactivePreset) {
-        updateCollisionPresetResetFromProximity(Boolean(user.get('proximity')));
-      } else {
-        clearCollisionPresetResetTimeout();
-        fadeOutCollisionDrift();
-      }
     }
   });
 
@@ -890,9 +707,9 @@ async function main($container) {
   }
 
   renderApp();
-  const initialReactivePreset = isReactiveCollisionPreset(user.get('preset'));
-  setReactiveBackground(initialReactivePreset);
-  if (initialReactivePreset) {
+  const initialReactiveState = Number(user.get('state')) > 0;
+  setReactiveBackground(initialReactiveState);
+  if (initialReactiveState) {
     updateCollisionPresetResetFromProximity(Boolean(user.get('proximity')));
   }
   motionDebugEl = debug ? document.getElementById('devicemotion-debug') : null;
