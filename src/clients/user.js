@@ -31,6 +31,10 @@ export default {
       type: 'boolean',
       default: false,
     },
+    periphery: {
+      type: 'boolean',
+      default: false,
+    },
     preset: {
       type: 'float',
       default: 0,

@@ -165,14 +165,19 @@ function evaluateCollisions() {
   const proximityOffset = Number(global.get('proximity_offset') ?? 10);
   const safeProximityOffset = Number.isFinite(proximityOffset) ? proximityOffset : 10;
   const proximityDistance = Math.max(0, safeCollisionDistance + safeProximityOffset);
+  const peripheryOffset = Number(global.get('periphery_offset') ?? 15);
+  const safePeripheryOffset = Number.isFinite(peripheryOffset) ? peripheryOffset : 15;
+  const peripheryDistance = Math.max(0, proximityDistance + safePeripheryOffset);
   const collisionDistanceSq = safeCollisionDistance * safeCollisionDistance;
   const proximityDistanceSq = proximityDistance * proximityDistance;
+  const peripheryDistanceSq = peripheryDistance * peripheryDistance;
   const states = Array
     .from(controlStates.values())
     .filter((state) => Number(state.get('active') ?? 0) > ACTIVE_THRESHOLD);
 
   const collidingUserIds = new Set();
   const proximateUserIds = new Set();
+  const peripheralUserIds = new Set();
   const usersByExternalId = new Map();
   userStates.forEach((userState) => {
     const externalId = Number(userState.get('id'));
@@ -207,6 +212,11 @@ function evaluateCollisions() {
       const dy = posA.y - posB.y;
       const distanceSquared = dx * dx + dy * dy;
 
+      if (distanceSquared < peripheryDistanceSq) {
+        peripheralUserIds.add(userIdA);
+        peripheralUserIds.add(userIdB);
+      }
+
       if (distanceSquared < proximityDistanceSq) {
         proximateUserIds.add(userIdA);
         proximateUserIds.add(userIdB);
@@ -230,6 +240,12 @@ function evaluateCollisions() {
     const currentProximity = userState.get('proximity');
     if (nextProximity !== currentProximity) {
       userState.set({ proximity: nextProximity });
+    }
+
+    const nextPeriphery = peripheralUserIds.has(userId);
+    const currentPeriphery = userState.get('periphery');
+    if (nextPeriphery !== currentPeriphery) {
+      userState.set({ periphery: nextPeriphery });
     }
   });
 }
@@ -338,6 +354,9 @@ global.onUpdate(updates => {
     evaluateCollisions();
   }
   if ('proximity_offset' in updates) {
+    evaluateCollisions();
+  }
+  if ('periphery_offset' in updates) {
     evaluateCollisions();
   }
 }, true);

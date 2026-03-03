@@ -40,6 +40,12 @@ export default {
     min: 5,
     max: 20,
   },
+  periphery_offset: {
+    type: 'float',
+    default: 15,
+    min: 10,
+    max: 25,
+  },
   collision_drift_strength: {
     type: 'float',
     default: 1.8,

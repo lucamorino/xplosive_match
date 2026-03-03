@@ -277,13 +277,16 @@ async function main($container) {
     //const globalIsRunning = Boolean(global.get('running'));
     const collisionDistance = Number(global.get('collision_distance') ?? 3);
     const proximityOffset = Number(global.get('proximity_offset') ?? 10);
+    const peripheryOffset = Number(global.get('periphery_offset') ?? 15);
     const collisionDriftStrength = Number(global.get('collision_drift_strength') ?? 0.5);
     const safeCollisionDistance = Number.isFinite(collisionDistance) ? collisionDistance : 3;
     const safeProximityOffset = Number.isFinite(proximityOffset) ? proximityOffset : 10;
+    const safePeripheryOffset = Number.isFinite(peripheryOffset) ? peripheryOffset : 15;
     const safeCollisionDriftStrength = Number.isFinite(collisionDriftStrength)
       ? Math.max(0, Math.min(5, collisionDriftStrength))
       : 0.5;
     const proximityDistance = safeCollisionDistance + safeProximityOffset;
+    const peripheryDistance = proximityDistance + safePeripheryOffset;
     const resetValue = Number(global.get('reset') ?? 0);
     const fullscreenActive = isFullscreenActive();
     const users = Array.from(userStates.values()).sort((a, b) => {
@@ -309,6 +312,7 @@ async function main($container) {
       //{ key: 'fb_trim', label: 'Trim', min: 0.01, max: 1, step: 0.01, digits: 2, default: 0.44 },
       { key: 'collide', label: 'Collide', type: 'boolean', default: false },
       { key: 'proximity', label: 'Proximity', type: 'boolean', default: false, readOnly: true },
+      { key: 'periphery', label: 'Periphery', type: 'boolean', default: false, readOnly: true },
     ];
 
     const formatValue = (value, digits) => {
@@ -383,6 +387,29 @@ async function main($container) {
                   <span class="param-label">Proximity Distance</span>
                   <span></span>
                   <span class="param-value">${formatValue(proximityDistance, 2)}</span>
+                </div>
+                <div class="param-row">
+                  <span class="param-label">Periphery Offset</span>
+                  <input
+                    class="param-input"
+                    type="number"
+                    min="10"
+                    max="25"
+                    step="0.1"
+                    .value="${safePeripheryOffset}"
+                    @input="${(event) => {
+                      const value = parseFloat(event.target.value);
+                      if (Number.isFinite(value)) {
+                        global.set({ periphery_offset: value });
+                      }
+                    }}"
+                  />
+                  <span class="param-value">${formatValue(safePeripheryOffset, 2)}</span>
+                </div>
+                <div class="param-row">
+                  <span class="param-label">Periphery Distance</span>
+                  <span></span>
+                  <span class="param-value">${formatValue(peripheryDistance, 2)}</span>
                 </div>
                 <div class="param-row">
                   <span class="param-label">Drift Strength</span>

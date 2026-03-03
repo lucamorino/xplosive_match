@@ -88,6 +88,17 @@ async function main($container) {
   let motionEventReceived = false;
   let pointerDragFallbackActive = false;
   let device = null;
+  let user = null;
+  let shakeActionReady = false;
+  let shakeEnvelope = 0;
+  let shakeLastMagnitude = 0;
+  let shakeLastTriggerTime = -Infinity;
+  const shakeGravity = {
+    x: 0,
+    y: 0,
+    z: 0,
+    initialized: false,
+  };
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const clampCoord = (value) => clamp(Number(value), 0, 100);
@@ -107,6 +118,10 @@ async function main($container) {
   const motionXHistory = [];
   const motionYHistory = [];
   const motionZHistory = [];
+  const shakeGravitySmoothing = 0.9;
+  const shakeEnvelopeDecay = 0.82;
+  const shakeTriggerThreshold = 4.2;
+  const shakeCooldownMs = 1200;
   const motionLogWeights = Array.from(
     { length: motionSmoothingWindowSize },
     (_, index) => Math.log(index + 2),
@@ -142,6 +157,7 @@ async function main($container) {
       `interval: ${formatMotionValue(e.interval)} ms`,
       `accG: x ${formatMotionValue(acc.x)} y ${formatMotionValue(acc.y)} z ${formatMotionValue(acc.z)}`,
       `rot: a ${formatMotionValue(rot.alpha)} b ${formatMotionValue(rot.beta)} g ${formatMotionValue(rot.gamma)}`,
+      `shake: m ${formatMotionValue(shakeLastMagnitude)} e ${formatMotionValue(shakeEnvelope)}`,
     ].join('\n');
   };
 
@@ -226,11 +242,50 @@ async function main($container) {
     padUi?.setPointerDragEnabled?.(nextValue);
   };
 
+  const detectShake = (rawX, rawY, rawZ, nowMs) => {
+    if (!shakeGravity.initialized) {
+      shakeGravity.x = rawX;
+      shakeGravity.y = rawY;
+      shakeGravity.z = rawZ;
+      shakeGravity.initialized = true;
+      shakeEnvelope = 0;
+      shakeLastMagnitude = 0;
+      return false;
+    }
+
+    shakeGravity.x = (shakeGravity.x * shakeGravitySmoothing) + (rawX * (1 - shakeGravitySmoothing));
+    shakeGravity.y = (shakeGravity.y * shakeGravitySmoothing) + (rawY * (1 - shakeGravitySmoothing));
+    shakeGravity.z = (shakeGravity.z * shakeGravitySmoothing) + (rawZ * (1 - shakeGravitySmoothing));
+
+    const highPassX = rawX - shakeGravity.x;
+    const highPassY = rawY - shakeGravity.y;
+    const highPassZ = rawZ - shakeGravity.z;
+    const magnitude = Math.hypot(highPassX, highPassY, highPassZ);
+    shakeLastMagnitude = magnitude;
+    shakeEnvelope = (shakeEnvelope * shakeEnvelopeDecay) + (magnitude * (1 - shakeEnvelopeDecay));
+
+    if (magnitude < shakeTriggerThreshold) {
+      return false;
+    }
+
+    if (shakeEnvelope < shakeTriggerThreshold * 0.55) {
+      return false;
+    }
+
+    if ((nowMs - shakeLastTriggerTime) < shakeCooldownMs) {
+      return false;
+    }
+
+    shakeLastTriggerTime = nowMs;
+    return true;
+  };
+
   const sendMotionEvent = (e) => {
     const acc = e.accelerationIncludingGravity || {};
     const rawX = typeof acc.x === 'number' ? acc.x : 0;
     const rawY = typeof acc.y === 'number' ? acc.y : 0;
     const rawZ = typeof acc.z === 'number' ? acc.z : 0;
+    const shakeDetected = detectShake(rawX, rawY, rawZ, performance.now());
     const x = smoothMotionValueLogarithmically(motionXHistory, rawX);
     const y = smoothMotionValueLogarithmically(motionYHistory, rawY);
     const z = smoothMotionValueLogarithmically(motionZHistory, rawZ);
@@ -239,6 +294,11 @@ async function main($container) {
       sendMessageToInport(device, 'accelerometer', [x, y, z]);
     }
     applyControlCoords(coords);
+
+    if (shakeDetected && shakeActionReady) {
+      debugLog('Shake detected, triggering collision action');
+      triggerCollisionPresetChange();
+    }
   };
 
   const updateMotionDebug = (e) => {
@@ -294,7 +354,7 @@ async function main($container) {
   const index = checkin.getIndex();
   //const instr = checkin.getData();
   const global = await client.stateManager.attach('global');
-  const user = await client.stateManager.create('user');
+  user = await client.stateManager.create('user');
   const control = await client.stateManager.create('control');
   controlState = control;
 
@@ -364,6 +424,9 @@ async function main($container) {
   }
 
   function isReactiveCollisionActive() {
+    if (!user) {
+      return false;
+    }
     return Number(user.get('state')) > 0;
   }
 
@@ -375,6 +438,9 @@ async function main($container) {
   }
 
   function resetCollisionPresetToDefault() {
+    if (!user || !device) {
+      return;
+    }
     const randPreset = Math.floor(Math.random() * 5);
     user.set({ preset: randPreset });
     user.set({ state: 0 });
@@ -384,6 +450,9 @@ async function main($container) {
   }
 
   function scheduleCollisionPresetReset() {
+    if (!user) {
+      return;
+    }
     if (collisionPresetResetTimeout !== null) {
       return;
     }
@@ -415,6 +484,10 @@ async function main($container) {
   }
 
   function triggerCollisionPresetChange() {
+    if (!user || !device) {
+      return;
+    }
+
     const coupled = Boolean(user.get('collide'));
     if (!coupled) {
       return;
@@ -453,6 +526,7 @@ async function main($container) {
   sendMessageToInport(device, 'state', [0]);
   sendMessageToInport(device, 'start', [1]); // ensure the patch starts in a known state
   control.set({ active: 1 });
+  shakeActionReady = true;
 
   function stopReactiveBackgroundLoop() {
     if (backgroundRAF !== null) {
