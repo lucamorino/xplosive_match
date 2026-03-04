@@ -9,11 +9,14 @@ import { loadConfig, configureHttpRouter } from '@soundworks/helpers/server.js';
 
 import pluginPlatformInit from '@soundworks/plugin-platform-init/server.js'; 
 import pluginSync from '@soundworks/plugin-sync/server.js'; 
-import pluginCheckin from '@soundworks/plugin-checkin/server.js'; 
+import pluginCheckin from '@soundworks/plugin-checkin/server.js';
+import ServerPluginLogger from '@soundworks/plugin-logger/server.js';
+
 
 import globalSchema from './global/global.js'; 
 import userSchema from './clients/user.js';
 import controlSchema from './clients/control.js';
+import { write } from 'fs';
 
 // - General documentation: https://soundworks.dev/
 // - API documentation:     https://soundworks.dev/api
@@ -98,6 +101,9 @@ server.pluginManager.register('checkin', pluginCheckin, {
   capacity: 20,
   data: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'o', 'p', 'q', 'r', 's', 't', 'u'],
 }); 
+server.pluginManager.register('logger', ServerPluginLogger, {
+  dirname: 'logs',
+});
 
 server.stateManager.defineClass('global', globalSchema);
 server.stateManager.defineClass('user', userSchema); 
@@ -107,6 +113,9 @@ await server.start();
 
 const global = await server.stateManager.create('global');
 //const user = await server.stateManager.create('user'); 
+const logger = await server.pluginManager.get('logger');
+const writer = await logger.createWriter('server_Global-Param-log');
+//const sharedWrite = await logger.createWriter('shared-writer');
 
 const userCollection = await server.stateManager.getCollection('user');
 const userStates = new Map();
@@ -116,6 +125,7 @@ const controlStates = new Map();
 const ACTIVE_THRESHOLD = 0.5;
 const HARSH_THRESHOLD = 0.5;
 const WINNING_SCORE = 10;
+
 
 function getPosition(state) {
   const x = Number(state.get('X') ?? state.get('x'));
@@ -304,6 +314,7 @@ function evaluateEndStates() {
 controlCollection.onAttach((state) => {
   controlStates.set(state.id, state);
   evaluateCollisions();
+  //writer.write(controlStates);
 }, true);
 
 controlCollection.onDetach((state) => {
@@ -313,6 +324,7 @@ controlCollection.onDetach((state) => {
 
 controlCollection.onChange(() => {
   evaluateCollisions();
+  //writer.write(controlStates);
 });
 
 userCollection.onAttach((state) => {
@@ -320,6 +332,7 @@ userCollection.onAttach((state) => {
   //evaluatePenalties();
   evaluateCollisions();
   evaluateEndStates();
+  //writer.write(userStates);
 }, true);
 
 userCollection.onDetach((state) => {
@@ -332,6 +345,7 @@ userCollection.onDetach((state) => {
 userCollection.onChange(() => {
   //evaluatePenalties();
   evaluateEndStates();
+  //writer.write(userStates);
 });
 
 const sync = await server.pluginManager.get('sync');
@@ -347,16 +361,20 @@ global.onUpdate(updates => {
       global.set({ syncTriggerTime: triggerTime });
       console.log(`Running state ON at syncTime ${triggerTime}`);
     }
+    writer.write({ running: global.get('running'), syncTriggerTime: global.get('syncTriggerTime') });
 
     evaluateEndStates();
   }
   if ('collision_distance' in updates) {
     evaluateCollisions();
+    writer.write({ collision_distance: global.get('collision_distance') });
   }
   if ('proximity_offset' in updates) {
     evaluateCollisions();
+    writer.write({ proximity_offset: global.get('proximity_offset') });
   }
   if ('periphery_offset' in updates) {
     evaluateCollisions();
+    writer.write({ periphery_offset: global.get('periphery_offset') });
   }
 }, true);

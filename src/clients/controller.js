@@ -5,6 +5,7 @@ import { html, render } from 'lit';
 
 import pluginSync from '@soundworks/plugin-sync/client.js'; 
 import pluginCheckin from '@soundworks/plugin-checkin/client.js'; 
+import ClientPluginLogger from '@soundworks/plugin-logger/client.js';
 
 
 // - General documentation: https://soundworks.dev/
@@ -77,6 +78,8 @@ async function main($container) {
     reloadOnVisibilityChange: false,
   });
 
+  client.pluginManager.register('logger', ClientPluginLogger);
+
   await client.start();
 
   //tryEnterFullscreen();
@@ -84,6 +87,9 @@ async function main($container) {
   const global = await client.stateManager.attach('global');
   const userCollection = await client.stateManager.getCollection('user');
   const controlCollection = await client.stateManager.getCollection('control');
+
+  const logger = await client.pluginManager.get('logger');
+  const writer = await logger.createWriter('controller-log');
 
   const userStates = new Map();
   const userUpdateUnsubs = new Map();
@@ -560,8 +566,14 @@ async function main($container) {
   global.onUpdate(() => {
     renderApp();
   });
-  userCollection.onChange(() => renderApp());
-  controlCollection.onChange(() => renderApp());
+  userCollection.onChange(() => {
+    renderApp();
+    writer.write({ userStates: Array.from(userStates.values()) });
+  });
+  controlCollection.onChange(() => {
+    renderApp();
+    writer.write({ controlStates: Array.from(controlStates.values()) });
+  });
 }
 
 launcher.execute(main, {

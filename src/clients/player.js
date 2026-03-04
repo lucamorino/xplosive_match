@@ -14,7 +14,8 @@ import LoopSampler from '../lib/LoopSampler.js';
 import pluginPlatformInit from '@soundworks/plugin-platform-init/client.js'; 
 import pluginSync from '@soundworks/plugin-sync/client.js'; 
 import pluginCheckin from '@soundworks/plugin-checkin/client.js'; 
-import { send } from 'process';
+import ClientPluginLogger from '@soundworks/plugin-logger/client.js';
+//import { send } from 'process';
 //import { start } from 'repl';
 //import { send } from 'process';
 
@@ -120,7 +121,13 @@ async function main($container) {
   const motionZHistory = [];
   const shakeGravitySmoothing = 0.9;
   const shakeEnvelopeDecay = 0.82;
-  const shakeTriggerThreshold = 4.2;
+  // Collision sustain difficulty ramp (tune these values).
+  const collisionShakeRamp = {
+    thresholdStart: 2,
+    thresholdEnd: 50,
+    durationMs: 10000,
+  };
+  let collisionModeStartedAtMs = null;
   const shakeCooldownMs = 1200;
   const motionLogWeights = Array.from(
     { length: motionSmoothingWindowSize },
@@ -226,6 +233,15 @@ async function main($container) {
     });
   };
 
+  const mapPointerCoordsToAccelerometer = (coords) => {
+    const xNorm = clampCoord(coords?.x) / 100;
+    const yNorm = clampCoord(coords?.y) / 100;
+    const x = (xNorm * 20) - 10;
+    // Invert Y so top of screen maps to positive values.
+    const y = ((1 - yNorm) * 20) - 10;
+    return { x, y, z: 0 };
+  };
+
   const setPointerDragFallback = (enabled, reason = null) => {
     const nextValue = Boolean(enabled);
     if (pointerDragFallbackActive === nextValue) {
@@ -241,6 +257,29 @@ async function main($container) {
     }
     padUi?.setPointerDragEnabled?.(nextValue);
   };
+
+  function setCollisionModeActive(isActive, nowMs = performance.now()) {
+    if (isActive) {
+      if (collisionModeStartedAtMs === null) {
+        collisionModeStartedAtMs = nowMs;
+      }
+      return;
+    }
+
+    collisionModeStartedAtMs = null;
+  }
+
+  function getCurrentShakeTriggerThreshold(nowMs = performance.now()) {
+    const { thresholdStart, thresholdEnd, durationMs } = collisionShakeRamp;
+    if (!isReactiveCollisionActive() || collisionModeStartedAtMs === null) {
+      return thresholdStart;
+    }
+
+    const safeDuration = Math.max(1, Number(durationMs) || 1);
+    const elapsed = Math.max(0, nowMs - collisionModeStartedAtMs);
+    const progress = clamp(elapsed / safeDuration, 0, 1);
+    return thresholdStart + ((thresholdEnd - thresholdStart) * progress);
+  }
 
   const detectShake = (rawX, rawY, rawZ, nowMs) => {
     if (!shakeGravity.initialized) {
@@ -261,14 +300,15 @@ async function main($container) {
     const highPassY = rawY - shakeGravity.y;
     const highPassZ = rawZ - shakeGravity.z;
     const magnitude = Math.hypot(highPassX, highPassY, highPassZ);
+    const currentThreshold = getCurrentShakeTriggerThreshold(nowMs);
     shakeLastMagnitude = magnitude;
     shakeEnvelope = (shakeEnvelope * shakeEnvelopeDecay) + (magnitude * (1 - shakeEnvelopeDecay));
 
-    if (magnitude < shakeTriggerThreshold) {
+    if (magnitude < currentThreshold) {
       return false;
     }
 
-    if (shakeEnvelope < shakeTriggerThreshold * 0.55) {
+    if (shakeEnvelope < currentThreshold * 0.55) {
       return false;
     }
 
@@ -295,9 +335,8 @@ async function main($container) {
     }
     applyControlCoords(coords);
 
-    if (shakeDetected && shakeActionReady) {
-      debugLog('Shake detected, triggering collision action');
-      triggerCollisionPresetChange();
+    if (shakeActionReady && isReactiveCollisionActive()) {
+      updateCollisionResetFromShake(shakeDetected);
     }
   };
 
@@ -320,6 +359,11 @@ async function main($container) {
     typeof window.DeviceMotionEvent !== 'undefined'
     && devicemotion
     && typeof devicemotion.addEventListener === 'function'
+  );
+
+  const shouldUsePointerAccelerometer = () => (
+    pointerDragFallbackActive
+    && (!hasDeviceMotionApi || !motionEventReceived)
   );
 
   if (hasDeviceMotionApi) {
@@ -370,37 +414,6 @@ async function main($container) {
   outputNode.connect(analyser);
   analyser.connect(audioContext.destination);
 
-  /* const humGain = audioContext.createGain();
-  humGain.gain.value = 0.3;
-  humGain.connect(outputNode);
-
-
-  const humSample = './assets/samples/hum.wav';
-  const humBuffer = await loadAudioBuffer(humSample, audioContext.sampleRate);
-  const volume = 0.5;
-  const startTime = sync.getLocalTime() + 0.5; // 1 second in the future
-  const isRunning = global.get('running');
-
-  const humLoop = new LoopSampler(audioContext, humBuffer, volume, startTime);
-  humLoop.output.connect(humGain);
-
-  function playerLoop(startTime, isRunning) {
-    if (!isRunning && !scheduler.has(humLoop.play)) {
-        scheduler.add(humLoop.play, startTime);
-        //console.log('adding scheduler');
-      } else if (!isRunning && scheduler.has(humLoop.play)) {
-        scheduler.remove(humLoop.play);
-        humLoop.stop(startTime);
-        scheduler.add(humLoop.play, startTime+0.5);
-        //console.log('reset scheduler');
-      } else if (isRunning && scheduler.has(humLoop.play)) { 
-        scheduler.remove(humLoop.play);
-        humLoop.stop(startTime);
-      }
-  };
-
-  playerLoop(startTime, isRunning); */
-
 
   const patchExportURL = "assets/rnbo_export/patch.export.json";
   let response, patcher;
@@ -430,26 +443,27 @@ async function main($container) {
     return Number(user.get('state')) > 0;
   }
 
-  function clearCollisionPresetResetTimeout() {
+  function clearCollisionResetTimeout() {
     if (collisionPresetResetTimeout !== null) {
       clearTimeout(collisionPresetResetTimeout);
       collisionPresetResetTimeout = null;
     }
   }
 
-  function resetCollisionPresetToDefault() {
+  function resetCollisionToDefault() {
     if (!user || !device) {
       return;
     }
     const randPreset = Math.floor(Math.random() * 5);
     user.set({ preset: randPreset });
     user.set({ state: 0 });
+    setCollisionModeActive(false);
     loadPresetAtIndex(device, presets, randPreset);
     sendMessageToInport(device, 'state', [0]);
     setReactiveBackground(false);
   }
 
-  function scheduleCollisionPresetReset() {
+  function scheduleCollisionReset() {
     if (!user) {
       return;
     }
@@ -460,30 +474,27 @@ async function main($container) {
     collisionPresetResetTimeout = setTimeout(() => {
       collisionPresetResetTimeout = null;
 
-      if (Boolean(user.get('proximity'))) {
-        return;
-      }
-
       if (!isReactiveCollisionActive()) {
         return;
       }
 
-      resetCollisionPresetToDefault();
+      resetCollisionToDefault();
     }, collisionPresetResetDelayMs);
   }
 
-  function updateCollisionPresetResetFromProximity(isProximity) {
-    if (isProximity) {
-      clearCollisionPresetResetTimeout();
+  function updateCollisionResetFromShake(shakeDetected) {
+    if (!isReactiveCollisionActive()) {
       return;
     }
 
-    if (isReactiveCollisionActive()) {
-      scheduleCollisionPresetReset();
+    if (shakeDetected) {
+      clearCollisionResetTimeout();
     }
+
+    scheduleCollisionReset();
   }
 
-  function triggerCollisionPresetChange() {
+  function triggerCollision() {
     if (!user || !device) {
       return;
     }
@@ -494,9 +505,10 @@ async function main($container) {
     }
 
     user.set({ state: 1 });
+    setCollisionModeActive(true);
     sendMessageToInport(device, 'state', [1]);
     setReactiveBackground(true);
-    updateCollisionPresetResetFromProximity(Boolean(user.get('proximity')));
+    scheduleCollisionReset();
   }
 
   debugLog("Attempting to create RNBO device...");
@@ -598,7 +610,7 @@ async function main($container) {
     }
   }
 
-  function updateSharpnessDisplay(value) {
+  /* function updateSharpnessDisplay(value) {
     const el = document.getElementById('sharpness-value');
     if (!el) return;
     const v = Number(value);
@@ -618,7 +630,7 @@ async function main($container) {
     const normalized = Math.max(0, Math.min(1, energyValue));
     if (el) el.textContent = normalized.toFixed(2);
     if (fill) fill.style.width = `${normalized * 100}%`;
-  }
+  } */
 
   function updatePointsDisplay(pointsValue) {
     const el = document.getElementById('points-counter-value');
@@ -658,10 +670,10 @@ async function main($container) {
 
   // Listen for messages from RNBO device
   device.messageEvent.subscribe((ev) => {
-    /* if (ev.tag === "out2") {
+    if (ev.tag === "out2") {
       const sharpness = ev.payload;
-      updateSharpnessDisplay(sharpness);
-    } */
+      //updateSharpnessDisplay(sharpness);
+    }
     /* if (ev.tag === "out3") {
       const roughness = ev.payload;
       updateRoughnessDisplay(roughness);
@@ -722,28 +734,36 @@ async function main($container) {
       const state = Number(updates['state']);
       sendMessageToInport(device, 'state', state);
     } */
-    if ('state' in updates) {
+    if ('state' in updates && global.get('running')) {
       const state = Number(updates['state']);
       const isActive = state > 0;
+      setCollisionModeActive(isActive);
       sendMessageToInport(device, 'state', [isActive ? 1 : 0]);
       setReactiveBackground(isActive);
       if (isActive) {
-        updateCollisionPresetResetFromProximity(Boolean(user.get('proximity')));
+        scheduleCollisionReset();
       } else {
-        clearCollisionPresetResetTimeout();
+        clearCollisionResetTimeout();
       }
     }
-    if ('collide' in updates) {
-      const couple = Boolean(updates['collide']);
-      padUi?.setCoupled?.(couple);
-      debugLog('Collide state updated:', couple);
-      sendMessageToInport(device, 'collision', [couple ? 1 : 0]);
+    if ('collide' in updates && global.get('running')) {
+      const collide = Boolean(updates['collide']);
+      padUi?.setCoupled?.(collide);
+      debugLog('Collide state updated:', collide);
+      //sendMessageToInport(device, 'collision', [collide ? 1 : 0]);
+      if (collide) {
+        triggerCollision();
+      }
     }
-    if ('proximity' in updates) {
+    if ('proximity' in updates && global.get('running')) {
       const proximity = Boolean(updates['proximity']);
-      updateCollisionPresetResetFromProximity(proximity);
       debugLog('Proximity state updated:', proximity);
-      sendMessageToInport(device, 'proximity', [proximity ? 1 : 0]);
+      sendMessageToInport(device, 'collision', [proximity ? 1 : 0]);
+    }
+    if ('periphery' in updates && global.get('running')) {
+      const periphery = Boolean(updates['periphery']);
+      debugLog('Periphery state updated:', periphery);
+      sendMessageToInport(device, 'proximity', [periphery ? 1 : 0]);
     }
      if ('preset' in updates) {
       const newPreset = updates['preset'];
@@ -771,7 +791,7 @@ async function main($container) {
         <div class="cloud-layer cloud-layer-c"></div>
         <div class="noise-reactive-layer" aria-hidden="true"></div>
         <div id="motion-scene">
-          <button id="motion-dot" type="button" aria-label="Collision preset button"></button>
+          <div id="motion-dot" aria-hidden="true"></div>
         </div>
         ${debug ? html`
           <pre id="devicemotion-debug" class="debug-box motion-debug-view">Waiting for motion...</pre>
@@ -782,19 +802,23 @@ async function main($container) {
 
   renderApp();
   const initialReactiveState = Number(user.get('state')) > 0;
+  setCollisionModeActive(initialReactiveState);
   setReactiveBackground(initialReactiveState);
   if (initialReactiveState) {
-    updateCollisionPresetResetFromProximity(Boolean(user.get('proximity')));
+    scheduleCollisionReset();
   }
   motionDebugEl = debug ? document.getElementById('devicemotion-debug') : null;
   padUi = setupUI(control, (handler) => {
     motionPadHandler = handler;
   }, {
     initialCoupled: Boolean(user.get('collide')),
-    onCollisionButtonPress: triggerCollisionPresetChange,
     enablePointerDrag: pointerDragFallbackActive,
     onManualMove: (coords) => {
       applyControlCoords(coords);
+      if (device && shouldUsePointerAccelerometer()) {
+        const pointerAccel = mapPointerCoordsToAccelerometer(coords);
+        sendMessageToInport(device, 'accelerometer', [pointerAccel.x, pointerAccel.y, pointerAccel.z]);
+      }
     },
   });
   //startOscilloscope(analyser);
@@ -944,7 +968,6 @@ function startOscilloscope(analyser) {
 function setupUI(control, registerMotionHandler, options = {}) {
   const {
     initialCoupled = false,
-    onCollisionButtonPress = null,
     enablePointerDrag = false,
     onManualMove = null,
   } = options;
@@ -957,7 +980,6 @@ function setupUI(control, registerMotionHandler, options = {}) {
   let isCoupled = Boolean(initialCoupled);
   let isPointerDragEnabled = Boolean(enablePointerDrag);
   let dragPointerId = null;
-  let draggedDuringPointer = false;
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const clamp01 = (value) => clamp(value, 0, 100);
@@ -1017,27 +1039,6 @@ function setupUI(control, registerMotionHandler, options = {}) {
     }
 
     dot.classList.toggle('is-collision-active', isCoupled);
-    if (dot instanceof HTMLButtonElement) {
-      dot.disabled = !isCoupled;
-    }
-  }
-
-  if (dot) {
-    dot.addEventListener('click', (event) => {
-      if (draggedDuringPointer) {
-        draggedDuringPointer = false;
-        return;
-      }
-
-      if (!isCoupled) {
-        return;
-      }
-      
-      event.preventDefault();
-      if (typeof onCollisionButtonPress === 'function') {
-        onCollisionButtonPress();
-      }
-    });
   }
 
   if (scene) {
@@ -1051,7 +1052,6 @@ function setupUI(control, registerMotionHandler, options = {}) {
       }
 
       dragPointerId = event.pointerId;
-      draggedDuringPointer = false;
       applyPointerCoords(event);
       if (scene.setPointerCapture) {
         try {
@@ -1067,7 +1067,6 @@ function setupUI(control, registerMotionHandler, options = {}) {
         return;
       }
 
-      draggedDuringPointer = true;
       applyPointerCoords(event);
     });
 
