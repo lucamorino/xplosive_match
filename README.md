@@ -1,4 +1,4 @@
-# `B3-H3R0`
+# `XPLOSIVE COLLIDER`
 
 Thanks for using soundworks!
 
