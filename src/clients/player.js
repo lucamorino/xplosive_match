@@ -84,22 +84,10 @@ async function main($container) {
   let lastControlCoords = { x: null, y: null };
   const motionUpdateInterval = 50;
   const motionFallbackDelayMs = 1500;
-  const collisionPresetResetDelayMs = 2000;
-  let collisionPresetResetTimeout = null;
   let motionEventReceived = false;
   let pointerDragFallbackActive = false;
   let device = null;
   let user = null;
-  let shakeActionReady = false;
-  let shakeEnvelope = 0;
-  let shakeLastMagnitude = 0;
-  let shakeLastTriggerTime = -Infinity;
-  const shakeGravity = {
-    x: 0,
-    y: 0,
-    z: 0,
-    initialized: false,
-  };
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const clampCoord = (value) => clamp(Number(value), 0, 100);
@@ -119,16 +107,6 @@ async function main($container) {
   const motionXHistory = [];
   const motionYHistory = [];
   const motionZHistory = [];
-  const shakeGravitySmoothing = 0.9;
-  const shakeEnvelopeDecay = 0.82;
-  // Collision sustain difficulty ramp (tune these values).
-  const collisionShakeRamp = {
-    thresholdStart: 2,
-    thresholdEnd: 50,
-    durationMs: 10000,
-  };
-  let collisionModeStartedAtMs = null;
-  const shakeCooldownMs = 1200;
   const motionLogWeights = Array.from(
     { length: motionSmoothingWindowSize },
     (_, index) => Math.log(index + 2),
@@ -164,7 +142,6 @@ async function main($container) {
       `interval: ${formatMotionValue(e.interval)} ms`,
       `accG: x ${formatMotionValue(acc.x)} y ${formatMotionValue(acc.y)} z ${formatMotionValue(acc.z)}`,
       `rot: a ${formatMotionValue(rot.alpha)} b ${formatMotionValue(rot.beta)} g ${formatMotionValue(rot.gamma)}`,
-      `shake: m ${formatMotionValue(shakeLastMagnitude)} e ${formatMotionValue(shakeEnvelope)}`,
     ].join('\n');
   };
 
@@ -185,43 +162,6 @@ async function main($container) {
       motionPadHandler(coords);
     }
   };
-
-  /* function mapCoordsToPreset(coords) {
-    const x = clampCoord(coords?.x ?? 50);
-    const y = clampCoord(coords?.y ?? 50);
-    const nx = ((x / 100) * 2) - 1;
-    const ny = ((y / 100) * 2) - 1;
-
-    // Center zone maps to preset 0
-    if (nx >= -0.3 && nx <= 0.3 && ny >= -0.3 && ny <= 0.3) {
-      return 0;
-    } 
-
-    // 5 outer sectors, clockwise, starting from upper-left as preset 1
-    const vx = nx;
-    const vy = -ny; // invert y to have mathematical orientation (up is positive)
-    const angle = Math.atan2(vy, vx);
-    const fullTurn = Math.PI * 2;
-    const startAngle = (3 * Math.PI) / 4; // upper-left
-    const clockwiseFromStart = (startAngle - angle + fullTurn) % fullTurn;
-    const sectorSize = fullTurn / 4;
-    const sectorIndex = Math.floor(clockwiseFromStart / sectorSize);
-    return Math.min(4, Math.max(1, sectorIndex + 1));
-  }
-
-  function updatePresetFromCoords(coords) {
-    // Keep collision presets (6-10) untouched while collision mode is active.
-    if (Number(user.get('state')) > 0) {
-      return;
-    }
-
-    const mappedPreset = mapCoordsToPreset(coords);
-    const currentPreset = Math.floor(Number(user.get('preset')));
-    if (!Number.isFinite(currentPreset) || currentPreset !== mappedPreset) {
-      user.set({ preset: mappedPreset });
-      loadPresetAtIndex(device, presets, mappedPreset);
-    }
-  } */
 
   const applyControlCoords = (coords) => {
     if (!coords) {
@@ -258,74 +198,11 @@ async function main($container) {
     padUi?.setPointerDragEnabled?.(nextValue);
   };
 
-  function setCollisionModeActive(isActive, nowMs = performance.now()) {
-    if (isActive) {
-      if (collisionModeStartedAtMs === null) {
-        collisionModeStartedAtMs = nowMs;
-      }
-      return;
-    }
-
-    collisionModeStartedAtMs = null;
-  }
-
-  function getCurrentShakeTriggerThreshold(nowMs = performance.now()) {
-    const { thresholdStart, thresholdEnd, durationMs } = collisionShakeRamp;
-    if (!isReactiveCollisionActive() || collisionModeStartedAtMs === null) {
-      return thresholdStart;
-    }
-
-    const safeDuration = Math.max(1, Number(durationMs) || 1);
-    const elapsed = Math.max(0, nowMs - collisionModeStartedAtMs);
-    const progress = clamp(elapsed / safeDuration, 0, 1);
-    return thresholdStart + ((thresholdEnd - thresholdStart) * progress);
-  }
-
-  const detectShake = (rawX, rawY, rawZ, nowMs) => {
-    if (!shakeGravity.initialized) {
-      shakeGravity.x = rawX;
-      shakeGravity.y = rawY;
-      shakeGravity.z = rawZ;
-      shakeGravity.initialized = true;
-      shakeEnvelope = 0;
-      shakeLastMagnitude = 0;
-      return false;
-    }
-
-    shakeGravity.x = (shakeGravity.x * shakeGravitySmoothing) + (rawX * (1 - shakeGravitySmoothing));
-    shakeGravity.y = (shakeGravity.y * shakeGravitySmoothing) + (rawY * (1 - shakeGravitySmoothing));
-    shakeGravity.z = (shakeGravity.z * shakeGravitySmoothing) + (rawZ * (1 - shakeGravitySmoothing));
-
-    const highPassX = rawX - shakeGravity.x;
-    const highPassY = rawY - shakeGravity.y;
-    const highPassZ = rawZ - shakeGravity.z;
-    const magnitude = Math.hypot(highPassX, highPassY, highPassZ);
-    const currentThreshold = getCurrentShakeTriggerThreshold(nowMs);
-    shakeLastMagnitude = magnitude;
-    shakeEnvelope = (shakeEnvelope * shakeEnvelopeDecay) + (magnitude * (1 - shakeEnvelopeDecay));
-
-    if (magnitude < currentThreshold) {
-      return false;
-    }
-
-    if (shakeEnvelope < currentThreshold * 0.55) {
-      return false;
-    }
-
-    if ((nowMs - shakeLastTriggerTime) < shakeCooldownMs) {
-      return false;
-    }
-
-    shakeLastTriggerTime = nowMs;
-    return true;
-  };
-
   const sendMotionEvent = (e) => {
     const acc = e.accelerationIncludingGravity || {};
     const rawX = typeof acc.x === 'number' ? acc.x : 0;
     const rawY = typeof acc.y === 'number' ? acc.y : 0;
     const rawZ = typeof acc.z === 'number' ? acc.z : 0;
-    const shakeDetected = detectShake(rawX, rawY, rawZ, performance.now());
     const x = smoothMotionValueLogarithmically(motionXHistory, rawX);
     const y = smoothMotionValueLogarithmically(motionYHistory, rawY);
     const z = smoothMotionValueLogarithmically(motionZHistory, rawZ);
@@ -334,10 +211,6 @@ async function main($container) {
       sendMessageToInport(device, 'accelerometer', [x, y, z]);
     }
     applyControlCoords(coords);
-
-    if (shakeActionReady && isReactiveCollisionActive()) {
-      updateCollisionResetFromShake(shakeDetected);
-    }
   };
 
   const updateMotionDebug = (e) => {
@@ -398,9 +271,12 @@ async function main($container) {
   const index = checkin.getIndex();
   //const instr = checkin.getData();
   const global = await client.stateManager.attach('global');
+  const userCollection = await client.stateManager.getCollection('user');
   user = await client.stateManager.create('user');
   const control = await client.stateManager.create('control');
   controlState = control;
+  const userStates = new Map();
+  const userUpdateUnsubs = new Map();
 
   user.set({id: index});
   control.set({id: index});
@@ -436,64 +312,6 @@ async function main($container) {
       debugLog("No presets defined");
   }
 
-  function isReactiveCollisionActive() {
-    if (!user) {
-      return false;
-    }
-    return Number(user.get('state')) > 0;
-  }
-
-  function clearCollisionResetTimeout() {
-    if (collisionPresetResetTimeout !== null) {
-      clearTimeout(collisionPresetResetTimeout);
-      collisionPresetResetTimeout = null;
-    }
-  }
-
-  function resetCollisionToDefault() {
-    if (!user || !device) {
-      return;
-    }
-    const randPreset = Math.floor(Math.random() * 5);
-    user.set({ preset: randPreset });
-    user.set({ state: 0 });
-    setCollisionModeActive(false);
-    loadPresetAtIndex(device, presets, randPreset);
-    sendMessageToInport(device, 'state', [0]);
-    setReactiveBackground(false);
-  }
-
-  function scheduleCollisionReset() {
-    if (!user) {
-      return;
-    }
-    if (collisionPresetResetTimeout !== null) {
-      return;
-    }
-
-    collisionPresetResetTimeout = setTimeout(() => {
-      collisionPresetResetTimeout = null;
-
-      if (!isReactiveCollisionActive()) {
-        return;
-      }
-
-      resetCollisionToDefault();
-    }, collisionPresetResetDelayMs);
-  }
-
-  function updateCollisionResetFromShake(shakeDetected) {
-    if (!isReactiveCollisionActive()) {
-      return;
-    }
-
-    if (shakeDetected) {
-      clearCollisionResetTimeout();
-    }
-
-    scheduleCollisionReset();
-  }
-
   function triggerCollision() {
     if (!user || !device) {
       return;
@@ -504,11 +322,13 @@ async function main($container) {
       return;
     }
 
-    user.set({ state: 1 });
-    setCollisionModeActive(true);
-    sendMessageToInport(device, 'state', [1]);
-    setReactiveBackground(true);
-    scheduleCollisionReset();
+    const randPreset = Math.floor(Math.random() * 6);
+    user.set({ preset: randPreset });
+    loadPresetAtIndex(device, presets, randPreset);
+
+    if (global.get('alarm') > 0) {
+      user.set({ state: 1 });
+    } 
   }
 
   debugLog("Attempting to create RNBO device...");
@@ -536,9 +356,9 @@ async function main($container) {
   loadPresetAtIndex(device, presets, 1);
   debugLog('Initial preset 1 loaded');
   sendMessageToInport(device, 'state', [0]);
+  sendMessageToInport(device, 'score', [Number(user.get('score') ?? 0)]);
   sendMessageToInport(device, 'start', [1]); // ensure the patch starts in a known state
   control.set({ active: 1 });
-  shakeActionReady = true;
 
   function stopReactiveBackgroundLoop() {
     if (backgroundRAF !== null) {
@@ -640,6 +460,25 @@ async function main($container) {
     //if (fill) fill.style.width = `${normalized * 100}%`;
   }
 
+  function updateOtherPointsDisplay(pointsValue) {
+    const el = document.getElementById('other-points-counter-value');
+    if (!el) return;
+    const safePoints = Number(pointsValue);
+    el.textContent = Number.isFinite(safePoints) ? safePoints.toFixed(2) : '0.00';
+  }
+
+  function refreshOtherPointsDisplay() {
+    const myStateId = user?.id;
+    const otherStates = Array.from(userStates.values())
+      .filter((state) => state.id !== myStateId)
+      .sort((a, b) => Number(a.get('id') ?? 0) - Number(b.get('id') ?? 0));
+
+    const otherPoints = otherStates.length > 0
+      ? Number(otherStates[0].get('score') ?? 0)
+      : 0;
+    updateOtherPointsDisplay(otherPoints);
+  }
+
   function getEndgameOverlayText() {
     const endState = Number(user.get('endState') ?? 0);
     if (endState > 0) {
@@ -668,6 +507,40 @@ async function main($container) {
     sendMessageToInport(device, 'start', [0]); // ensure the patch is stopped when game over screen is shown
   }
 
+  function updateAlarmWarningDisplay(alarmValue) {
+    const warningEl = document.getElementById('alarm-warning');
+    if (!warningEl) {
+      return;
+    }
+    warningEl.classList.toggle('is-visible', Number(alarmValue) > 0);
+  }
+
+  userCollection.onAttach((state) => {
+    userStates.set(state.id, state);
+
+    const off = state.onUpdate((updates) => {
+      if ('score' in updates || 'id' in updates) {
+        refreshOtherPointsDisplay();
+      }
+    });
+
+    if (typeof off === 'function') {
+      userUpdateUnsubs.set(state.id, off);
+    }
+
+    refreshOtherPointsDisplay();
+  }, true);
+
+  userCollection.onDetach((state) => {
+    userStates.delete(state.id);
+    const off = userUpdateUnsubs.get(state.id);
+    if (typeof off === 'function') {
+      off();
+    }
+    userUpdateUnsubs.delete(state.id);
+    refreshOtherPointsDisplay();
+  });
+
   // Listen for messages from RNBO device
   device.messageEvent.subscribe((ev) => {
     if (ev.tag === "out2") {
@@ -682,7 +555,7 @@ async function main($container) {
       const energy = ev.payload;
       //updateEnergyDisplay(energy);
     } */
-    if (ev.tag === "out5") {
+    if (ev.tag === "out3") {
       const points = ev.payload;
       updatePointsDisplay(points);
       user.set({ score: points });
@@ -720,6 +593,13 @@ async function main($container) {
       }
       applyBackgroundMode(harshness, penalty);
     } */
+    if ('alarm' in updates) {
+      const alarm = updates['alarm'];
+      debugLog('Alarm level updated:', alarm);
+      updateAlarmWarningDisplay(alarm);
+      sendMessageToInport(device, 'alarm', [alarm]);
+    }
+
     if ('reset' in updates) {
       padUi?.applyReset?.();
       debugLog('Reset received, player coordinates rotated');
@@ -734,36 +614,38 @@ async function main($container) {
       const state = Number(updates['state']);
       sendMessageToInport(device, 'state', state);
     } */
-    if ('state' in updates && global.get('running')) {
+    if ('state' in updates) {
       const state = Number(updates['state']);
       const isActive = state > 0;
-      setCollisionModeActive(isActive);
       sendMessageToInport(device, 'state', [isActive ? 1 : 0]);
       setReactiveBackground(isActive);
-      if (isActive) {
-        scheduleCollisionReset();
-      } else {
-        clearCollisionResetTimeout();
-      }
     }
-    if ('collide' in updates && global.get('running')) {
+    if ('score' in updates) {
+      const score = Number(updates['score']);
+      const safeScore = Number.isFinite(score) ? score : 0;
+      updatePointsDisplay(safeScore);
+      sendMessageToInport(device, 'score', [safeScore]);
+    }
+    if ('collide' in updates) {
       const collide = Boolean(updates['collide']);
       padUi?.setCoupled?.(collide);
       debugLog('Collide state updated:', collide);
       //sendMessageToInport(device, 'collision', [collide ? 1 : 0]);
       if (collide) {
         triggerCollision();
+      } else if (Number(user.get('state')) !== 0) {
+        user.set({ state: 0 });
       }
     }
     if ('proximity' in updates && global.get('running')) {
       const proximity = Boolean(updates['proximity']);
       debugLog('Proximity state updated:', proximity);
-      sendMessageToInport(device, 'collision', [proximity ? 1 : 0]);
+      sendMessageToInport(device, 'proximity', [proximity ? 1 : 0]);
     }
     if ('periphery' in updates && global.get('running')) {
       const periphery = Boolean(updates['periphery']);
       debugLog('Periphery state updated:', periphery);
-      sendMessageToInport(device, 'proximity', [periphery ? 1 : 0]);
+      sendMessageToInport(device, 'periphery', [periphery ? 1 : 0]);
     }
      if ('preset' in updates) {
       const newPreset = updates['preset'];
@@ -783,9 +665,14 @@ async function main($container) {
           <div id="gameover-text">game over</div>
         </div>
         <div class="player-points-hud">
-          <span class="player-points-label">SHARP-Points:</span>
+          <span class="player-points-label">My S-Points:</span>
           <span id="points-counter-value" min="0.00" max="10.00" step="0.01">0.00</span>
         </div>
+        <div class="player-points-hud player-points-hud-other">
+          <span class="player-points-label">Other S-Points:</span>
+          <span id="other-points-counter-value" min="0.00" max="10.00" step="0.01">0.00</span>
+        </div>
+        <img id="alarm-warning" class="alarm-warning" src="/images/warning.png" alt="Alarm warning" />
         <div class="cloud-layer cloud-layer-a"></div>
         <div class="cloud-layer cloud-layer-b"></div>
         <div class="cloud-layer cloud-layer-c"></div>
@@ -802,11 +689,9 @@ async function main($container) {
 
   renderApp();
   const initialReactiveState = Number(user.get('state')) > 0;
-  setCollisionModeActive(initialReactiveState);
   setReactiveBackground(initialReactiveState);
-  if (initialReactiveState) {
-    scheduleCollisionReset();
-  }
+  refreshOtherPointsDisplay();
+  updateAlarmWarningDisplay(global.get('alarm'));
   motionDebugEl = debug ? document.getElementById('devicemotion-debug') : null;
   padUi = setupUI(control, (handler) => {
     motionPadHandler = handler;
@@ -980,6 +865,7 @@ function setupUI(control, registerMotionHandler, options = {}) {
   let isCoupled = Boolean(initialCoupled);
   let isPointerDragEnabled = Boolean(enablePointerDrag);
   let dragPointerId = null;
+  const pointerDragLerp = 0.35;
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const clamp01 = (value) => clamp(value, 0, 100);
@@ -1019,9 +905,14 @@ function setupUI(control, registerMotionHandler, options = {}) {
       return;
     }
 
-    updateMotionDotPosition(coords.x, coords.y);
+    const smoothedCoords = {
+      x: motionPoint.x + ((coords.x - motionPoint.x) * pointerDragLerp),
+      y: motionPoint.y + ((coords.y - motionPoint.y) * pointerDragLerp),
+    };
+
+    updateMotionDotPosition(smoothedCoords.x, smoothedCoords.y);
     if (typeof onManualMove === 'function') {
-      onManualMove(coords);
+      onManualMove(smoothedCoords);
     }
   }
 

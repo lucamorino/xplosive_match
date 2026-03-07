@@ -525,7 +525,8 @@ a:hover {
   text-transform: uppercase;
 }
 
-#points-counter-value, 
+#points-counter-value,
+#other-points-counter-value,
 #energy-counter-value {
   font-family: var(--sw-font-family);
   padding-left: 2px;
@@ -916,6 +917,30 @@ a:hover {
   pointer-events: none;
 }
 
+.player-points-hud-other {
+  left: auto;
+  right: 14px;
+}
+
+.alarm-warning {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 7;
+  width: clamp(48px, 12vw, 88px);
+  height: auto;
+  opacity: 0;
+  transform: translateX(-50%) scale(0.92);
+  transition: opacity 140ms ease, transform 140ms ease;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.42));
+}
+
+.alarm-warning.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
 .player-points-label {
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -923,7 +948,8 @@ a:hover {
   opacity: 0.85;
 }
 
-#app-root.cloud-app #points-counter-value {
+#app-root.cloud-app #points-counter-value,
+#app-root.cloud-app #other-points-counter-value {
   font-size: 16px;
   font-weight: 700;
   line-height: 1;

@@ -89,11 +89,51 @@ async function main($container) {
   const controlCollection = await client.stateManager.getCollection('control');
 
   const logger = await client.pluginManager.get('logger');
-  const writer = await logger.createWriter('controller-log');
+  const writer = await logger.createWriter('controller_User-Param-log');
 
   const userStates = new Map();
   const userUpdateUnsubs = new Map();
   const controlStates = new Map();
+  const userParameterKeys = [
+    'id',
+    //'volume',
+    'state',
+    //'penalty',
+    'collide',
+    'proximity',
+    'periphery',
+    'preset',
+    //'style',
+    'score',
+    'endState',
+    //'del',
+    //'phase',
+    //'phase_q',
+    //'bp',
+    //'bp_q',
+    //'modulation',
+  ];
+
+  function collectUsersParameters() {
+    return Array.from(userStates.values())
+      .sort((a, b) => Number(a.get('id') ?? 0) - Number(b.get('id') ?? 0))
+      .map((state) => {
+        const params = {
+          stateId: state.id,
+        };
+        userParameterKeys.forEach((key) => {
+          params[key] = state.get(key);
+        });
+        return params;
+      });
+  }
+
+  function writeUsersParameters(event) {
+    writer.write({
+      event,
+      users: collectUsersParameters(),
+    });
+  }
 
   userCollection.onAttach((state) => {
     userStates.set(state.id, state);
@@ -107,6 +147,7 @@ async function main($container) {
     if (typeof off === 'function') {
       userUpdateUnsubs.set(state.id, off);
     }
+    writeUsersParameters('user-attach');
   }, true);
 
   userCollection.onDetach((state) => {
@@ -116,6 +157,7 @@ async function main($container) {
       off();
     }
     userUpdateUnsubs.delete(state.id);
+    writeUsersParameters('user-detach');
   });
 
   controlCollection.onAttach((state) => {
@@ -280,17 +322,14 @@ async function main($container) {
 
   function renderApp() {
     const isRunning = global.get('running');
+    const isAlarmEnabled = Number(global.get('alarm') ?? 1) > 0;
     //const globalIsRunning = Boolean(global.get('running'));
-    const collisionDistance = Number(global.get('collision_distance') ?? 3);
+    const collisionDistance = Number(global.get('collision_distance') ?? 1.5);
     const proximityOffset = Number(global.get('proximity_offset') ?? 10);
     const peripheryOffset = Number(global.get('periphery_offset') ?? 15);
-    const collisionDriftStrength = Number(global.get('collision_drift_strength') ?? 0.5);
-    const safeCollisionDistance = Number.isFinite(collisionDistance) ? collisionDistance : 3;
+    const safeCollisionDistance = Number.isFinite(collisionDistance) ? collisionDistance : 1.5;
     const safeProximityOffset = Number.isFinite(proximityOffset) ? proximityOffset : 10;
     const safePeripheryOffset = Number.isFinite(peripheryOffset) ? peripheryOffset : 15;
-    const safeCollisionDriftStrength = Number.isFinite(collisionDriftStrength)
-      ? Math.max(0, Math.min(5, collisionDriftStrength))
-      : 0.5;
     const proximityDistance = safeCollisionDistance + safeProximityOffset;
     const peripheryDistance = proximityDistance + safePeripheryOffset;
     const resetValue = Number(global.get('reset') ?? 0);
@@ -348,6 +387,18 @@ async function main($container) {
                     .checked="${isRunning}"
                     @change="${(event) => {
                       global.set({ running: event.target.checked });
+                    }}"
+                  />
+                  <span class="toggle-indicator"></span>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle-label">ALARM</span>
+                  <input
+                    class="toggle-input"
+                    type="checkbox"
+                    .checked="${isAlarmEnabled}"
+                    @change="${(event) => {
+                      global.set({ alarm: event.target.checked ? 1 : 0 });
                     }}"
                   />
                   <span class="toggle-indicator"></span>
@@ -416,24 +467,6 @@ async function main($container) {
                   <span class="param-label">Periphery Distance</span>
                   <span></span>
                   <span class="param-value">${formatValue(peripheryDistance, 2)}</span>
-                </div>
-                <div class="param-row">
-                  <span class="param-label">Drift Strength</span>
-                  <input
-                    class="param-input"
-                    type="number"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    .value="${safeCollisionDriftStrength}"
-                    @input="${(event) => {
-                      const value = parseFloat(event.target.value);
-                      if (Number.isFinite(value)) {
-                        global.set({ collision_drift_strength: value });
-                      }
-                    }}"
-                  />
-                  <span class="param-value">${formatValue(safeCollisionDriftStrength, 2)}</span>
                 </div>
                 <div class="param-row">
                   <span class="param-label">Reset</span>
@@ -568,11 +601,11 @@ async function main($container) {
   });
   userCollection.onChange(() => {
     renderApp();
-    writer.write({ userStates: Array.from(userStates.values()) });
+    writeUsersParameters('user-change');
   });
   controlCollection.onChange(() => {
     renderApp();
-    writer.write({ controlStates: Array.from(controlStates.values()) });
+    //writer.write({ controlStates: Array.from(controlStates.values()) });
   });
 }
 

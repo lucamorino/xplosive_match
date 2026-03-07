@@ -6,3 +6,5 @@ clients:
     default: true
   controller:
     runtime: browser
+  display:
+    runtime: browser

@@ -46,11 +46,11 @@ export default {
     min: 10,
     max: 25,
   },
-  collision_drift_strength: {
+  alarm: {
     type: 'float',
-    default: 1.8,
+    default: 0,
     min: 0,
-    max: 5,
+    max: 1,
   },
   reset: {
     type: 'float',

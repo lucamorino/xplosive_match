@@ -121,6 +121,7 @@ const userCollection = await server.stateManager.getCollection('user');
 const userStates = new Map();
 const controlCollection = await server.stateManager.getCollection('control');
 const controlStates = new Map();
+const previousCollisionPairs = new Set();
 
 const ACTIVE_THRESHOLD = 0.5;
 const HARSH_THRESHOLD = 0.5;
@@ -188,6 +189,7 @@ function evaluateCollisions() {
   const collidingUserIds = new Set();
   const proximateUserIds = new Set();
   const peripheralUserIds = new Set();
+  const currentCollisionPairs = new Set();
   const usersByExternalId = new Map();
   userStates.forEach((userState) => {
     const externalId = Number(userState.get('id'));
@@ -235,9 +237,41 @@ function evaluateCollisions() {
       if (distanceSquared < collisionDistanceSq) {
         collidingUserIds.add(userIdA);
         collidingUserIds.add(userIdB);
+        const pairKey = userIdA < userIdB ? `${userIdA}:${userIdB}` : `${userIdB}:${userIdA}`;
+        currentCollisionPairs.add(pairKey);
       }
     }
   }
+
+  if (Number(global.get('alarm') ?? 0) > 0) {
+    currentCollisionPairs.forEach((pairKey) => {
+      if (previousCollisionPairs.has(pairKey)) {
+        return;
+      }
+
+      const [leftIdRaw, rightIdRaw] = pairKey.split(':');
+      const leftId = Number(leftIdRaw);
+      const rightId = Number(rightIdRaw);
+      const leftState = usersByExternalId.get(leftId);
+      const rightState = usersByExternalId.get(rightId);
+      if (!leftState || !rightState) {
+        return;
+      }
+
+      const leftScoreRaw = Number(leftState.get('score'));
+      const rightScoreRaw = Number(rightState.get('score'));
+      const leftScore = Number.isFinite(leftScoreRaw) ? leftScoreRaw : 0;
+      const rightScore = Number.isFinite(rightScoreRaw) ? rightScoreRaw : 0;
+
+      leftState.set({ score: rightScore });
+      rightState.set({ score: leftScore });
+    });
+  }
+
+  previousCollisionPairs.clear();
+  currentCollisionPairs.forEach((pairKey) => {
+    previousCollisionPairs.add(pairKey);
+  });
 
   usersByExternalId.forEach((userState, userId) => {
     const nextCouple = collidingUserIds.has(userId);
@@ -376,5 +410,9 @@ global.onUpdate(updates => {
   if ('periphery_offset' in updates) {
     evaluateCollisions();
     writer.write({ periphery_offset: global.get('periphery_offset') });
+  }
+  if ('alarm' in updates) {
+    //evaluateCollisions();
+    writer.write({ alarm: global.get('alarm') });
   }
 }, true);
