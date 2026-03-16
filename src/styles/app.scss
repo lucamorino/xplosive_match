@@ -917,9 +917,28 @@ a:hover {
   pointer-events: none;
 }
 
+.player-points-hud-sharpness {
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.18);
+  opacity: 0.45;
+}
+
 .player-points-hud-other {
   left: auto;
   right: 14px;
+}
+
+#app-root.cloud-app.is-training-mode .player-points-hud {
+  display: none;
+}
+
+#app-root.cloud-app:not(.is-training-mode) .player-points-hud-sharpness {
+  display: none;
+}
+
+#app-root.cloud-app.is-training-mode .player-points-hud-sharpness {
+  display: inline-flex;
 }
 
 .alarm-warning {
@@ -949,7 +968,8 @@ a:hover {
 }
 
 #app-root.cloud-app #points-counter-value,
-#app-root.cloud-app #other-points-counter-value {
+#app-root.cloud-app #other-points-counter-value,
+#app-root.cloud-app #sharpness-counter-value {
   font-size: 16px;
   font-weight: 700;
   line-height: 1;

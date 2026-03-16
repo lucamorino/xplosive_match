@@ -15,6 +15,7 @@ import pluginPlatformInit from '@soundworks/plugin-platform-init/client.js';
 import pluginSync from '@soundworks/plugin-sync/client.js'; 
 import pluginCheckin from '@soundworks/plugin-checkin/client.js'; 
 import ClientPluginLogger from '@soundworks/plugin-logger/client.js';
+import { use } from 'react';
 //import { send } from 'process';
 //import { start } from 'repl';
 //import { send } from 'process';
@@ -88,6 +89,7 @@ async function main($container) {
   let pointerDragFallbackActive = false;
   let device = null;
   let user = null;
+  let isTrainingMode = false;
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const clampCoord = (value) => clamp(Number(value), 0, 100);
@@ -271,6 +273,7 @@ async function main($container) {
   const index = checkin.getIndex();
   //const instr = checkin.getData();
   const global = await client.stateManager.attach('global');
+  isTrainingMode = Boolean(global.get('training'));
   const userCollection = await client.stateManager.getCollection('user');
   user = await client.stateManager.create('user');
   const control = await client.stateManager.create('control');
@@ -327,6 +330,8 @@ async function main($container) {
     loadPresetAtIndex(device, presets, randPreset);
 
     if (global.get('alarm') > 0) {
+      const opponentScore = getCollidingOpponentScore();
+      sendMessageToInport(device, 'score', [opponentScore]);
       user.set({ state: 1 });
     } 
   }
@@ -356,7 +361,7 @@ async function main($container) {
   loadPresetAtIndex(device, presets, 1);
   debugLog('Initial preset 1 loaded');
   sendMessageToInport(device, 'state', [0]);
-  sendMessageToInport(device, 'score', [Number(user.get('score') ?? 0)]);
+  sendMessageToInport(device, 'score', [0]);
   sendMessageToInport(device, 'start', [1]); // ensure the patch starts in a known state
   control.set({ active: 1 });
 
@@ -460,11 +465,27 @@ async function main($container) {
     //if (fill) fill.style.width = `${normalized * 100}%`;
   }
 
+  function updateSharpnessDisplay(sharpnessValue) {
+    const el = document.getElementById('sharpness-counter-value');
+    if (!el) {
+      return;
+    }
+    const safeValue = Number(sharpnessValue);
+    el.textContent = Number.isFinite(safeValue) ? safeValue.toFixed(2) : '0.00';
+  }
+
   function updateOtherPointsDisplay(pointsValue) {
     const el = document.getElementById('other-points-counter-value');
     if (!el) return;
     const safePoints = Number(pointsValue);
     el.textContent = Number.isFinite(safePoints) ? safePoints.toFixed(2) : '0.00';
+  }
+
+  function applyTrainingModeState() {
+    const root = document.getElementById('app-root');
+    if (root) {
+      root.classList.toggle('is-training-mode', isTrainingMode);
+    }
   }
 
   function refreshOtherPointsDisplay() {
@@ -477,6 +498,32 @@ async function main($container) {
       ? Number(otherStates[0].get('score') ?? 0)
       : 0;
     updateOtherPointsDisplay(otherPoints);
+  }
+
+  function getCollidingOpponentScore() {
+    if (!user) {
+      return 0;
+    }
+
+    const myStateId = Number(user.get('id'));
+    if (!Number.isFinite(myStateId)) {
+      return 0;
+    }
+
+    const opponentStates = Array.from(userStates.values())
+      .filter((state) => {
+        const stateId = Number(state.get('id'));
+        return Number.isFinite(stateId) && stateId !== myStateId;
+      });
+
+    const opponentState = opponentStates.find((state) => Boolean(state.get('collide'))) || opponentStates[0];
+
+    if (!opponentState) {
+      return 0;
+    }
+
+    const opponentScoreRaw = Number(opponentState.get('score'));
+    return Number.isFinite(opponentScoreRaw) ? opponentScoreRaw : 0;
   }
 
   function getEndgameOverlayText() {
@@ -545,7 +592,10 @@ async function main($container) {
   device.messageEvent.subscribe((ev) => {
     if (ev.tag === "out2") {
       const sharpness = ev.payload;
-      //updateSharpnessDisplay(sharpness);
+      const sharpnessValue = Number(sharpness);
+      if (isTrainingMode && Number.isFinite(sharpnessValue)) {
+        updateSharpnessDisplay(sharpnessValue);
+      }
     }
     /* if (ev.tag === "out3") {
       const roughness = ev.payload;
@@ -556,10 +606,18 @@ async function main($container) {
       //updateEnergyDisplay(energy);
     } */
     if (ev.tag === "out3") {
+      if (isTrainingMode) {
+        return;
+      }
+
       const points = ev.payload;
+      const safePoints = Number(points);
+      if (!Number.isFinite(safePoints)) {
+        return;
+      }
       updatePointsDisplay(points);
       user.set({ score: points });
-      if (points >= 10) {
+      if (safePoints >= 10) {
         global.set({ running: false });  
       }
     } 
@@ -600,8 +658,21 @@ async function main($container) {
       sendMessageToInport(device, 'alarm', [alarm]);
     }
 
+    if ('training' in updates) {
+      const nextTrainingMode = Boolean(updates['training']);
+      const previousTrainingMode = isTrainingMode;
+      isTrainingMode = nextTrainingMode;
+      if (isTrainingMode && !previousTrainingMode) {
+        updateSharpnessDisplay(0);
+      }
+      applyTrainingModeState();
+    }
+
     if ('reset' in updates) {
       padUi?.applyReset?.();
+      if (isTrainingMode) {
+        updateSharpnessDisplay(0);
+      }
       debugLog('Reset received, player coordinates rotated');
     }
   }); 
@@ -620,12 +691,12 @@ async function main($container) {
       sendMessageToInport(device, 'state', [isActive ? 1 : 0]);
       setReactiveBackground(isActive);
     }
-    if ('score' in updates) {
+    /* if ('score' in updates) {
       const score = Number(updates['score']);
       const safeScore = Number.isFinite(score) ? score : 0;
       updatePointsDisplay(safeScore);
       sendMessageToInport(device, 'score', [safeScore]);
-    }
+    } */
     if ('collide' in updates) {
       const collide = Boolean(updates['collide']);
       padUi?.setCoupled?.(collide);
@@ -660,7 +731,7 @@ async function main($container) {
   // -------------------------------------------------------------------
   function renderApp() {
     render(html`
-      <div id="app-root" class="cloud-app">
+      <div id="app-root" class="cloud-app ${Boolean(global.get('training')) ? 'is-training-mode' : ''}">
         <div id="gameover-overlay" role="status" aria-live="polite">
           <div id="gameover-text">game over</div>
         </div>
@@ -671,6 +742,10 @@ async function main($container) {
         <div class="player-points-hud player-points-hud-other">
           <span class="player-points-label">Other S-Points:</span>
           <span id="other-points-counter-value" min="0.00" max="10.00" step="0.01">0.00</span>
+        </div>
+        <div class="player-points-hud player-points-hud-sharpness">
+          <span class="player-points-label">Sharpness:</span>
+          <span id="sharpness-counter-value" min="0.00" max="10.00" step="0.01">0.00</span>
         </div>
         <img id="alarm-warning" class="alarm-warning" src="/images/warning.png" alt="Alarm warning" />
         <div class="cloud-layer cloud-layer-a"></div>
@@ -706,6 +781,7 @@ async function main($container) {
       }
     },
   });
+  applyTrainingModeState();
   //startOscilloscope(analyser);
   }
 

@@ -1,0 +1,12 @@
+type: production
+port: 8000
+baseUrl: ""
+serverAddress: 192.168.1.84
+useHttps: true
+httpsInfos:
+  cert: ../localhost+5.pem
+  key: ../localhost+5-key.pem
+auth:
+  clients: []
+  login: controller
+  password: controller

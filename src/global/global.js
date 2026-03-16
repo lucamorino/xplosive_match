@@ -4,6 +4,10 @@ export default {
     type: 'boolean',
     default: false,
   },
+  training: {
+    type: 'boolean',
+    default: false,
+  },
   syncTriggerTime: {
     type: 'float',
     default: 0,

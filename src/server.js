@@ -243,31 +243,6 @@ function evaluateCollisions() {
     }
   }
 
-  if (Number(global.get('alarm') ?? 0) > 0) {
-    currentCollisionPairs.forEach((pairKey) => {
-      if (previousCollisionPairs.has(pairKey)) {
-        return;
-      }
-
-      const [leftIdRaw, rightIdRaw] = pairKey.split(':');
-      const leftId = Number(leftIdRaw);
-      const rightId = Number(rightIdRaw);
-      const leftState = usersByExternalId.get(leftId);
-      const rightState = usersByExternalId.get(rightId);
-      if (!leftState || !rightState) {
-        return;
-      }
-
-      const leftScoreRaw = Number(leftState.get('score'));
-      const rightScoreRaw = Number(rightState.get('score'));
-      const leftScore = Number.isFinite(leftScoreRaw) ? leftScoreRaw : 0;
-      const rightScore = Number.isFinite(rightScoreRaw) ? rightScoreRaw : 0;
-
-      leftState.set({ score: rightScore });
-      rightState.set({ score: leftScore });
-    });
-  }
-
   previousCollisionPairs.clear();
   currentCollisionPairs.forEach((pairKey) => {
     previousCollisionPairs.add(pairKey);

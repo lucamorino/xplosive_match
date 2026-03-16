@@ -323,6 +323,7 @@ async function main($container) {
   function renderApp() {
     const isRunning = global.get('running');
     const isAlarmEnabled = Number(global.get('alarm') ?? 1) > 0;
+    const isTrainingEnabled = Boolean(global.get('training'));
     //const globalIsRunning = Boolean(global.get('running'));
     const collisionDistance = Number(global.get('collision_distance') ?? 1.5);
     const proximityOffset = Number(global.get('proximity_offset') ?? 10);
@@ -399,6 +400,18 @@ async function main($container) {
                     .checked="${isAlarmEnabled}"
                     @change="${(event) => {
                       global.set({ alarm: event.target.checked ? 1 : 0 });
+                    }}"
+                  />
+                  <span class="toggle-indicator"></span>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle-label">TRAINING</span>
+                  <input
+                    class="toggle-input"
+                    type="checkbox"
+                    .checked="${isTrainingEnabled}"
+                    @change="${(event) => {
+                      global.set({ training: event.target.checked });
                     }}"
                   />
                   <span class="toggle-indicator"></span>
