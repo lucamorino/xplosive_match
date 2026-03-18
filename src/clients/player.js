@@ -95,13 +95,24 @@ async function main($container) {
   const clampCoord = (value) => clamp(Number(value), 0, 100);
 
   const mapAccelToControlCoords = (accX, accY) => {
-    const maxG = 9.81; //8.33;//
+    const maxG = 2.81; //8.33;//
     const safeAccX = Number.isFinite(accX) ? accX : 0;
     const safeAccY = Number.isFinite(accY) ? accY : 0;
     const normX = clamp(safeAccX / maxG, -1, 1);
     const normY = clamp(safeAccY / maxG, -1, 1);
     const x = Math.round(((normX + 1) * 0.5) * 100);
     const y = Math.round((1 - ((normY + 1) * 0.5)) * 100);
+    return { x, y };
+  };
+
+  const mapAccelToDeviceCoords = (accX, accY) => {
+    const maxG = 2.81; //8.33;//
+    const safeAccX = Number.isFinite(accX) ? accX : 0;
+    const safeAccY = Number.isFinite(accY) ? accY : 0;
+    const normX = clamp(safeAccX / maxG, -1, 1);
+    const normY = clamp(safeAccY / maxG, -1, 1);
+    const x = Math.round(normX * 10);
+    const y = Math.round(normY * 10);
     return { x, y };
   };
 
@@ -209,8 +220,9 @@ async function main($container) {
     const y = smoothMotionValueLogarithmically(motionYHistory, rawY);
     const z = smoothMotionValueLogarithmically(motionZHistory, rawZ);
     const coords = mapAccelToControlCoords(x, y);
+    const deviceCoords = mapAccelToDeviceCoords(x, y);
     if (device) {
-      sendMessageToInport(device, 'accelerometer', [x, y, z]);
+      sendMessageToInport(device, 'accelerometer', [deviceCoords.x, deviceCoords.y, z]);
     }
     applyControlCoords(coords);
   };
@@ -315,6 +327,32 @@ async function main($container) {
       debugLog("No presets defined");
   }
 
+  function getRandomPresetIndexFromGlobalRange() {
+    const presetCount = Array.isArray(presets) ? presets.length : 0;
+    if (presetCount <= 0) {
+      return 0;
+    }
+
+    const configuredMin = Number(global.get('preset_range_min'));
+    const configuredMax = Number(global.get('preset_range_max'));
+    const defaultMin = 0;
+    const defaultMax = presetCount > 1 ? Math.min(presetCount - 1, 5) : 0;
+
+    let rangeMin = Number.isFinite(configuredMin) ? Math.floor(configuredMin) : defaultMin;
+    let rangeMax = Number.isFinite(configuredMax) ? Math.floor(configuredMax) : defaultMax;
+
+    const safeMaxPreset = presetCount - 1;
+    rangeMin = clamp(rangeMin, 0, safeMaxPreset);
+    rangeMax = clamp(rangeMax, 0, safeMaxPreset);
+
+    if (rangeMax < rangeMin) {
+      [rangeMin, rangeMax] = [rangeMax, rangeMin];
+    }
+
+    const rangeSize = rangeMax - rangeMin + 1;
+    return rangeMin + Math.floor(Math.random() * rangeSize);
+  }
+
   function triggerCollision() {
     if (!user || !device) {
       return;
@@ -325,7 +363,7 @@ async function main($container) {
       return;
     }
 
-    const randPreset = Math.floor(Math.random() * 6);
+    const randPreset = getRandomPresetIndexFromGlobalRange();
     user.set({ preset: randPreset });
     loadPresetAtIndex(device, presets, randPreset);
 

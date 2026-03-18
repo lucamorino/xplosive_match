@@ -56,6 +56,18 @@ export default {
     min: 0,
     max: 1,
   },
+  preset_range_min: {
+    type: 'float',
+    default: 0,
+    min: 0,
+    max: 9,
+  },
+  preset_range_max: {
+    type: 'float',
+    default: 5,
+    min: 1,
+    max: 10,
+  },
   reset: {
     type: 'float',
     default: 0,

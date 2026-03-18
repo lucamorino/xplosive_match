@@ -115,6 +115,14 @@ const global = await server.stateManager.create('global');
 //const user = await server.stateManager.create('user'); 
 const logger = await server.pluginManager.get('logger');
 const writer = await logger.createWriter('server_Global-Param-log');
+const logger_active = false; //true; --- IGNORE ---
+function writeLog(payload) {
+  if (!logger_active || !writer) {
+    return;
+  }
+  writer.write(payload);
+}
+
 //const sharedWrite = await logger.createWriter('shared-writer');
 
 const userCollection = await server.stateManager.getCollection('user');
@@ -370,24 +378,24 @@ global.onUpdate(updates => {
       global.set({ syncTriggerTime: triggerTime });
       console.log(`Running state ON at syncTime ${triggerTime}`);
     }
-    writer.write({ running: global.get('running'), syncTriggerTime: global.get('syncTriggerTime') });
+    writeLog({ running: global.get('running'), syncTriggerTime: global.get('syncTriggerTime') });
 
     evaluateEndStates();
   }
   if ('collision_distance' in updates) {
     evaluateCollisions();
-    writer.write({ collision_distance: global.get('collision_distance') });
+    writeLog({ collision_distance: global.get('collision_distance') });
   }
   if ('proximity_offset' in updates) {
     evaluateCollisions();
-    writer.write({ proximity_offset: global.get('proximity_offset') });
+    writeLog({ proximity_offset: global.get('proximity_offset') });
   }
   if ('periphery_offset' in updates) {
     evaluateCollisions();
-    writer.write({ periphery_offset: global.get('periphery_offset') });
+    writeLog({ periphery_offset: global.get('periphery_offset') });
   }
   if ('alarm' in updates) {
     //evaluateCollisions();
-    writer.write({ alarm: global.get('alarm') });
+    writeLog({ alarm: global.get('alarm') });
   }
 }, true);

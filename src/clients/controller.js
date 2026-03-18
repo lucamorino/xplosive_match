@@ -90,6 +90,7 @@ async function main($container) {
 
   const logger = await client.pluginManager.get('logger');
   const writer = await logger.createWriter('controller_User-Param-log');
+  const logger_active = false; //true; --- IGNORE ---
 
   const userStates = new Map();
   const userUpdateUnsubs = new Map();
@@ -129,6 +130,9 @@ async function main($container) {
   }
 
   function writeUsersParameters(event) {
+    if (!logger_active) {
+      return;
+    }
     writer.write({
       event,
       users: collectUsersParameters(),
@@ -331,6 +335,10 @@ async function main($container) {
     const safeCollisionDistance = Number.isFinite(collisionDistance) ? collisionDistance : 1.5;
     const safeProximityOffset = Number.isFinite(proximityOffset) ? proximityOffset : 10;
     const safePeripheryOffset = Number.isFinite(peripheryOffset) ? peripheryOffset : 15;
+    const presetRangeMin = Number(global.get('preset_range_min') ?? 0);
+    const presetRangeMax = Number(global.get('preset_range_max') ?? 5);
+    const safePresetRangeMin = Number.isFinite(presetRangeMin) ? presetRangeMin : 0;
+    const safePresetRangeMax = Number.isFinite(presetRangeMax) ? presetRangeMax : 5;
     const proximityDistance = safeCollisionDistance + safeProximityOffset;
     const peripheryDistance = proximityDistance + safePeripheryOffset;
     const resetValue = Number(global.get('reset') ?? 0);
@@ -480,6 +488,60 @@ async function main($container) {
                   <span class="param-label">Periphery Distance</span>
                   <span></span>
                   <span class="param-value">${formatValue(peripheryDistance, 2)}</span>
+                </div>
+                <div class="param-row">
+                  <span class="param-label">Preset Range Min</span>
+                  <input
+                    class="param-input"
+                    type="number"
+                    min="0"
+                    max="10"
+                    step="1"
+                    .value="${safePresetRangeMin}"
+                    @input="${(event) => {
+                      const value = parseFloat(event.target.value);
+                      if (Number.isFinite(value)) {
+                        const nextMin = Math.floor(value);
+                        const nextMax = safePresetRangeMax;
+                        if (nextMin > nextMax) {
+                          global.set({
+                            preset_range_min: nextMin,
+                            preset_range_max: nextMin,
+                          });
+                        } else {
+                          global.set({ preset_range_min: nextMin });
+                        }
+                      }
+                    }}"
+                  />
+                  <span class="param-value">${formatValue(safePresetRangeMin, 0)}</span>
+                </div>
+                <div class="param-row">
+                  <span class="param-label">Preset Range Max</span>
+                  <input
+                    class="param-input"
+                    type="number"
+                    min="0"
+                    max="10"
+                    step="1"
+                    .value="${safePresetRangeMax}"
+                    @input="${(event) => {
+                      const value = parseFloat(event.target.value);
+                      if (Number.isFinite(value)) {
+                        const nextMax = Math.floor(value);
+                        const nextMin = safePresetRangeMin;
+                        if (nextMax < nextMin) {
+                          global.set({
+                            preset_range_min: nextMax,
+                            preset_range_max: nextMax,
+                          });
+                        } else {
+                          global.set({ preset_range_max: nextMax });
+                        }
+                      }
+                    }}"
+                  />
+                  <span class="param-value">${formatValue(safePresetRangeMax, 0)}</span>
                 </div>
                 <div class="param-row">
                   <span class="param-label">Reset</span>
