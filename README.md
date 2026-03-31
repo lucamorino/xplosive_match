@@ -1,4 +1,4 @@
-# `XPLOSIVE COLLIDER`
+# `XPLOSIVE COLLISION`
 
 Welcome to _Xplosive Collision (XC)_, a noise-based networked music system for mobile devices. 
 
