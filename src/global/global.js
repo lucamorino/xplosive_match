@@ -64,7 +64,7 @@ export default {
   },
   preset_range_max: {
     type: 'float',
-    default: 5,
+    default: 6,
     min: 1,
     max: 10,
   },

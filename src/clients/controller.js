@@ -79,6 +79,7 @@ async function main($container) {
   });
 
   client.pluginManager.register('logger', ClientPluginLogger);
+  client.pluginManager.register('sync', pluginSync);
 
   await client.start();
 
@@ -89,8 +90,12 @@ async function main($container) {
   const controlCollection = await client.stateManager.getCollection('control');
 
   const logger = await client.pluginManager.get('logger');
-  const writer = await logger.createWriter('controller_User-Param-log');
-  const logger_active = false; //true; --- IGNORE ---
+  const writer = await logger.createWriter('controller_User-Param-log', { bufferSize: 20 });
+  const logger_active = true; //true; --- IGNORE ---
+
+  const sync = await client.pluginManager.get('sync');
+  const syncTime = sync.getSyncTime();
+  
 
   const userStates = new Map();
   const userUpdateUnsubs = new Map();
@@ -129,19 +134,20 @@ async function main($container) {
       });
   }
 
-  function writeUsersParameters(event) {
+  function writeUsersParameters(event, time) {
     if (!logger_active) {
       return;
     }
     writer.write({
       event,
+      time,
       users: collectUsersParameters(),
     });
   }
 
   userCollection.onAttach((state) => {
     userStates.set(state.id, state);
-
+    const localTime = sync.getLocalTime();
     const off = state.onUpdate((updates) => {
       if ('preset' in updates) {
         renderApp();
@@ -151,17 +157,18 @@ async function main($container) {
     if (typeof off === 'function') {
       userUpdateUnsubs.set(state.id, off);
     }
-    writeUsersParameters('user-attach');
+    writeUsersParameters('user-attach', localTime);
   }, true);
 
   userCollection.onDetach((state) => {
     userStates.delete(state.id);
+    const localTime = sync.getLocalTime();
     const off = userUpdateUnsubs.get(state.id);
     if (typeof off === 'function') {
       off();
     }
     userUpdateUnsubs.delete(state.id);
-    writeUsersParameters('user-detach');
+    writeUsersParameters('user-detach', localTime);
   });
 
   controlCollection.onAttach((state) => {
@@ -675,8 +682,9 @@ async function main($container) {
     renderApp();
   });
   userCollection.onChange(() => {
+    const localTime = sync.getLocalTime();
     renderApp();
-    writeUsersParameters('user-change');
+    writeUsersParameters('user-change', localTime);
   });
   controlCollection.onChange(() => {
     renderApp();

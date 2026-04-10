@@ -115,7 +115,7 @@ const global = await server.stateManager.create('global');
 //const user = await server.stateManager.create('user'); 
 const logger = await server.pluginManager.get('logger');
 const writer = await logger.createWriter('server_Global-Param-log');
-const logger_active = false; //true; --- IGNORE ---
+const logger_active = true; //true; --- IGNORE ---
 function writeLog(payload) {
   if (!logger_active || !writer) {
     return;
@@ -396,6 +396,8 @@ global.onUpdate(updates => {
   }
   if ('alarm' in updates) {
     //evaluateCollisions();
-    writeLog({ alarm: global.get('alarm') });
+     const triggerTime = syncTime + sync.getLocalTime();
+    global.set({ syncTriggerTime: triggerTime });
+    writeLog({ alarm: global.get('alarm'), syncTriggerTime: global.get('syncTriggerTime')});
   }
 }, true);

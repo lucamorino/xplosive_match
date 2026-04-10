@@ -3,38 +3,226 @@ import { Client } from '@soundworks/core/client.js';
 import { loadConfig, launcher } from '@soundworks/helpers/browser.js';
 import { html, render } from 'lit';
 
-// - General documentation: https://soundworks.dev/
-// - API documentation:     https://soundworks.dev/api
-// - Issue Tracker:         https://github.com/collective-soundworks/soundworks/issues
-// - Wizard & Tools:        `npx soundworks`
+const clamp01 = (value) => Math.max(0, Math.min(100, value));
+
+const clampToUnitCircle = (nx, ny) => {
+  const length = Math.hypot(nx, ny);
+  if (!Number.isFinite(length) || length <= 1 || length === 0) {
+    return { x: nx, y: ny };
+  }
+  return { x: nx / length, y: ny / length };
+};
+
+const normalizeXYToCircle = (xRaw, yRaw) => {
+  const x = clamp01(Number(xRaw));
+  const y = clamp01(Number(yRaw));
+  const nx = ((x / 100) * 2) - 1;
+  const ny = ((y / 100) * 2) - 1;
+  const clamped = clampToUnitCircle(nx, ny);
+  return {
+    x: ((clamped.x + 1) * 0.5) * 100,
+    y: ((clamped.y + 1) * 0.5) * 100,
+  };
+};
+
+const getCirclePadGeometry = (width, height) => {
+  const radius = Math.max(8, Math.min(width, height) * 0.5 - 2);
+  return {
+    cx: width * 0.5,
+    cy: height * 0.5,
+    radius,
+  };
+};
+
+const percentToPadPoint = (xRaw, yRaw, geometry) => {
+  const normalized = normalizeXYToCircle(xRaw, yRaw);
+  const nx = ((normalized.x / 100) * 2) - 1;
+  const ny = ((normalized.y / 100) * 2) - 1;
+  return {
+    x: geometry.cx + (nx * geometry.radius),
+    y: geometry.cy + (ny * geometry.radius),
+  };
+};
 
 async function main($container) {
   const config = loadConfig();
   const client = new Client(config);
 
-  // Eventually register plugins
-  // client.pluginManager.register('my-plugin', plugin);
-
-  // cf. https://soundworks.dev/tools/helpers.html#browserlauncher
-  launcher.register(client, { initScreensContainer: $container });
+  launcher.register(client, {
+    initScreensContainer: $container,
+    reloadOnVisibilityChange: false,
+  });
 
   await client.start();
 
-  function renderApp() {
-    render(html`
-      <div class="simple-layout">
-        <p>Hello ${client.config.app.name}!</p>
+  const global = await client.stateManager.attach('global');
+  const controlCollection = await client.stateManager.getCollection('control');
+  const controlStates = new Map();
 
-        <sw-credits .infos="${client.config.app}"></sw-credits>
+  function drawPad() {
+    const canvas = document.getElementById('controller-pad');
+    if (!canvas) return;
+
+    const displayWidth = Math.max(1, Math.floor(canvas.clientWidth));
+    const displayHeight = Math.max(1, Math.floor(canvas.clientHeight));
+    if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+      canvas.width = displayWidth;
+      canvas.height = displayHeight;
+    }
+
+    const ctx = canvas.getContext('2d');
+    const { width, height } = canvas;
+    ctx.clearRect(0, 0, width, height);
+    const geometry = getCirclePadGeometry(width, height);
+
+    const collisionDistance = Number(global.get('collision_distance') ?? 1.5);
+    const proximityOffset = Number(global.get('proximity_offset') ?? 10);
+    const safeCollisionDistance = Number.isFinite(collisionDistance) ? collisionDistance : 1.5;
+    const safeProximityOffset = Number.isFinite(proximityOffset) ? proximityOffset : 10;
+    const proximityDistance = Math.max(0, safeCollisionDistance + safeProximityOffset);
+    const proximityRadiusPx = (proximityDistance / 50) * geometry.radius;
+
+    ctx.fillStyle = '#05050710';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.beginPath();
+    ctx.arc(geometry.cx, geometry.cy, geometry.radius, 0, Math.PI * 2);
+    ctx.fillStyle = '#0b0b0d23';
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i <= 4; i += 1) {
+      ctx.beginPath();
+      ctx.arc(geometry.cx, geometry.cy, geometry.radius * (i / 4), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.beginPath();
+    ctx.moveTo(geometry.cx - geometry.radius, geometry.cy);
+    ctx.lineTo(geometry.cx + geometry.radius, geometry.cy);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(geometry.cx, geometry.cy - geometry.radius);
+    ctx.lineTo(geometry.cx, geometry.cy + geometry.radius);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.beginPath();
+    ctx.arc(geometry.cx, geometry.cy, geometry.radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(geometry.cx, geometry.cy, geometry.radius, 0, Math.PI * 2);
+    ctx.clip();
+
+    const controls = Array.from(controlStates.values()).sort((a, b) => {
+      return (a.get('id') ?? 0) - (b.get('id') ?? 0);
+    });
+
+    controls.forEach((state) => {
+      const id = state.get('id') ?? '?';
+      const xValue = state.get('X') ?? 0;
+      const yValue = state.get('Y') ?? 0;
+      const isActive = (state.get('active') ?? 0) > 0;
+      const point = percentToPadPoint(xValue, yValue, geometry);
+      const radius = isActive ? 8 : 5;
+      const haloOpacity = isActive ? 1 : 0.55;
+
+      if (proximityRadiusPx > 0) {
+        const proximityGradient = ctx.createRadialGradient(
+          point.x,
+          point.y,
+          0,
+          point.x,
+          point.y,
+          proximityRadiusPx,
+        );
+        proximityGradient.addColorStop(0, `rgba(225, 225, 225, ${0.12 * haloOpacity})`);
+        proximityGradient.addColorStop(0.5, `rgba(190, 190, 190, ${0.09 * haloOpacity})`);
+        proximityGradient.addColorStop(1, 'rgba(170, 170, 170, 0)');
+        ctx.fillStyle = proximityGradient;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, proximityRadiusPx, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = `rgba(205, 205, 205, ${0.24 * haloOpacity})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, proximityRadiusPx, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      ctx.beginPath();
+      ctx.fillStyle = isActive ? '#ffffff' : 'rgba(255, 255, 255, 0.45)';
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+      ctx.font = '10px sans-serif';
+      ctx.fillText(`${id}`, point.x + 10, point.y - 8);
+    });
+
+    ctx.restore();
+  }
+
+  function renderApp() {
+    const collisionDistance = Number(global.get('collision_distance') ?? 1.5);
+    const proximityOffset = Number(global.get('proximity_offset') ?? 10);
+    const safeCollisionDistance = Number.isFinite(collisionDistance) ? collisionDistance : 1.5;
+    const safeProximityOffset = Number.isFinite(proximityOffset) ? proximityOffset : 10;
+    const proximityDistance = safeCollisionDistance + safeProximityOffset;
+
+    render(html`
+      <div id="app-root" class="cloud-app controller-cloud-app">
+        <div class="cloud-layer cloud-layer-a"></div>
+        <div class="cloud-layer cloud-layer-b"></div>
+        <div class="cloud-layer cloud-layer-c"></div>
+        <div class="controller-layout">
+          <div class="controller-center">
+            <section>
+              <h2>Playground</h2>
+              <div class="control-frame controller-pad-frame">
+                <canvas id="controller-pad" width="420" height="420"></canvas>
+              </div>
+            </section>
+          </div>
+        </div>
       </div>
     `, $container);
+
+    drawPad();
   }
+
+  controlCollection.onAttach((state) => {
+    controlStates.set(state.id, state);
+    renderApp();
+  }, true);
+
+  controlCollection.onDetach((state) => {
+    controlStates.delete(state.id);
+    renderApp();
+  });
+
+  controlCollection.onChange(() => {
+    renderApp();
+  });
+
+  global.onUpdate(() => {
+    renderApp();
+  });
+
+  window.addEventListener('resize', () => {
+    drawPad();
+  });
 
   renderApp();
 }
 
-// The launcher allows to launch multiple clients in the same browser window
-// e.g. `http://127.0.0.1:8000?emulate=10` to run 10 clients side-by-side
 launcher.execute(main, {
   numClients: parseInt(new URLSearchParams(window.location.search).get('emulate') || '') || 1,
+  width: '100%',
 });
