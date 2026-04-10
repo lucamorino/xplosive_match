@@ -53,7 +53,7 @@ async function main($container) {
   const config = loadConfig();
   const client = new Client(config);
   const audioContext = new AudioContext();
-  const debug = true;
+  const debug = false;
   playerDebug = debug;
   audioContext.sampleRate = 48000; // ensure consistent sample rate across devices
   debugLog(audioContext.sampleRate);
@@ -69,12 +69,14 @@ async function main($container) {
   client.pluginManager.register('sync', pluginSync, {
     getTimeFunction: () => audioContext.currentTime, 
   }, ['platform-init']); 
+  client.pluginManager.register('logger', ClientPluginLogger);
 
   // cf. https://soundworks.dev/tools/helpers.html#browserlauncher
   launcher.register(client, { initScreensContainer: $container });
 
   await client.start();
 
+  const logger = await client.pluginManager.get('logger');
   const platformInit = await client.pluginManager.get('platform-init');
 
   let motionDebugEl = null;
@@ -90,6 +92,12 @@ async function main($container) {
   let device = null;
   let user = null;
   let isTrainingMode = false;
+  let sensorLogWriter = null;
+  let sensorLogTimerId = null;
+  const LOG_SAMPLE_INTERVAL_MS = 100;
+  let latestAccel = { x: 0, y: 0, z: 0 };
+  let latestSharpness = null;
+  const loggingActive = true;
 
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const clampCoord = (value) => clamp(Number(value), 0, 100);
@@ -158,6 +166,39 @@ async function main($container) {
     ].join('\n');
   };
 
+  function writeSensorSample(syncInstance) {
+    if (!loggingActive || !sensorLogWriter) {
+      return;
+    }
+    const time = syncInstance?.getSyncTime ? syncInstance.getSyncTime() : performance.now();
+    sensorLogWriter.write({
+      time,
+      accelerometer: {
+        x: Number(latestAccel.x) || 0,
+        y: Number(latestAccel.y) || 0,
+        // z: Number(latestAccel.z) || 0,
+      },
+      sharpness: Number.isFinite(latestSharpness) ? latestSharpness : null,
+    });
+  }
+
+  function startSensorLogTimer(syncInstance) {
+    if (!loggingActive || sensorLogTimerId !== null) {
+      return;
+    }
+    sensorLogTimerId = window.setInterval(
+      () => writeSensorSample(syncInstance),
+      LOG_SAMPLE_INTERVAL_MS,
+    );
+  }
+
+  function stopSensorLogTimer() {
+    if (sensorLogTimerId !== null) {
+      window.clearInterval(sensorLogTimerId);
+      sensorLogTimerId = null;
+    }
+  }
+
   const commitControlCoords = (coords) => {
     if (controlState?.set) {
       if (coords.x !== lastControlCoords.x || coords.y !== lastControlCoords.y) {
@@ -219,6 +260,7 @@ async function main($container) {
     const x = smoothMotionValueLogarithmically(motionXHistory, rawX);
     const y = smoothMotionValueLogarithmically(motionYHistory, rawY);
     const z = smoothMotionValueLogarithmically(motionZHistory, rawZ);
+    latestAccel = { x, y, z };
     const coords = mapAccelToControlCoords(x, y);
     const deviceCoords = mapAccelToDeviceCoords(x, y);
     if (device) {
@@ -277,9 +319,13 @@ async function main($container) {
 
   // retrieve initialized sync plugin 
   const sync = await client.pluginManager.get('sync'); 
+  sensorLogWriter = await logger.createWriter('player_Sensor-log', { bufferSize: 50 });
   const scheduler = new Scheduler(() => sync.getSyncTime(), { 
     currentTimeToProcessorTimeFunction: syncTime => sync.getLocalTime(syncTime), 
   });
+  startSensorLogTimer(sync);
+  window.addEventListener('beforeunload', stopSensorLogTimer);
+  window.addEventListener('pagehide', stopSensorLogTimer);
 
   const checkin = await client.pluginManager.get('checkin');
   const index = checkin.getIndex();
@@ -631,6 +677,9 @@ async function main($container) {
     if (ev.tag === "out2") {
       const sharpness = ev.payload;
       const sharpnessValue = Number(sharpness);
+      if (Number.isFinite(sharpnessValue)) {
+        latestSharpness = sharpnessValue;
+      }
       if (isTrainingMode && Number.isFinite(sharpnessValue)) {
         updateSharpnessDisplay(sharpnessValue);
       }
@@ -702,6 +751,7 @@ async function main($container) {
       isTrainingMode = nextTrainingMode;
       if (isTrainingMode && !previousTrainingMode) {
         updateSharpnessDisplay(0);
+        latestSharpness = 0;
       }
       applyTrainingModeState();
     }
@@ -813,8 +863,9 @@ async function main($container) {
     enablePointerDrag: pointerDragFallbackActive,
     onManualMove: (coords) => {
       applyControlCoords(coords);
+      const pointerAccel = mapPointerCoordsToAccelerometer(coords);
+      latestAccel = pointerAccel;
       if (device && shouldUsePointerAccelerometer()) {
-        const pointerAccel = mapPointerCoordsToAccelerometer(coords);
         sendMessageToInport(device, 'accelerometer', [pointerAccel.x, pointerAccel.y, pointerAccel.z]);
       }
     },

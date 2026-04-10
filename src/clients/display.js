@@ -5,45 +5,6 @@ import { html, render } from 'lit';
 
 const clamp01 = (value) => Math.max(0, Math.min(100, value));
 
-const clampToUnitCircle = (nx, ny) => {
-  const length = Math.hypot(nx, ny);
-  if (!Number.isFinite(length) || length <= 1 || length === 0) {
-    return { x: nx, y: ny };
-  }
-  return { x: nx / length, y: ny / length };
-};
-
-const normalizeXYToCircle = (xRaw, yRaw) => {
-  const x = clamp01(Number(xRaw));
-  const y = clamp01(Number(yRaw));
-  const nx = ((x / 100) * 2) - 1;
-  const ny = ((y / 100) * 2) - 1;
-  const clamped = clampToUnitCircle(nx, ny);
-  return {
-    x: ((clamped.x + 1) * 0.5) * 100,
-    y: ((clamped.y + 1) * 0.5) * 100,
-  };
-};
-
-const getCirclePadGeometry = (width, height) => {
-  const radius = Math.max(8, Math.min(width, height) * 0.5 - 2);
-  return {
-    cx: width * 0.5,
-    cy: height * 0.5,
-    radius,
-  };
-};
-
-const percentToPadPoint = (xRaw, yRaw, geometry) => {
-  const normalized = normalizeXYToCircle(xRaw, yRaw);
-  const nx = ((normalized.x / 100) * 2) - 1;
-  const ny = ((normalized.y / 100) * 2) - 1;
-  return {
-    x: geometry.cx + (nx * geometry.radius),
-    y: geometry.cy + (ny * geometry.radius),
-  };
-};
-
 async function main($container) {
   const config = loadConfig();
   const client = new Client(config);
@@ -58,6 +19,8 @@ async function main($container) {
   const global = await client.stateManager.attach('global');
   const controlCollection = await client.stateManager.getCollection('control');
   const controlStates = new Map();
+  const userCollection = await client.stateManager.getCollection('user');
+  const userStates = new Map();
 
   function drawPad() {
     const canvas = document.getElementById('controller-pad');
@@ -73,122 +36,79 @@ async function main($container) {
     const ctx = canvas.getContext('2d');
     const { width, height } = canvas;
     ctx.clearRect(0, 0, width, height);
-    const geometry = getCirclePadGeometry(width, height);
 
-    const collisionDistance = Number(global.get('collision_distance') ?? 1.5);
-    const proximityOffset = Number(global.get('proximity_offset') ?? 10);
-    const safeCollisionDistance = Number.isFinite(collisionDistance) ? collisionDistance : 1.5;
-    const safeProximityOffset = Number.isFinite(proximityOffset) ? proximityOffset : 10;
-    const proximityDistance = Math.max(0, safeCollisionDistance + safeProximityOffset);
-    const proximityRadiusPx = (proximityDistance / 50) * geometry.radius;
-
-    ctx.fillStyle = '#05050710';
+    ctx.fillStyle = '#060608';
     ctx.fillRect(0, 0, width, height);
-
-    ctx.beginPath();
-    ctx.arc(geometry.cx, geometry.cy, geometry.radius, 0, Math.PI * 2);
-    ctx.fillStyle = '#0b0b0d23';
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
-    ctx.lineWidth = 1;
-    for (let i = 1; i <= 4; i += 1) {
-      ctx.beginPath();
-      ctx.arc(geometry.cx, geometry.cy, geometry.radius * (i / 4), 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-    ctx.beginPath();
-    ctx.moveTo(geometry.cx - geometry.radius, geometry.cy);
-    ctx.lineTo(geometry.cx + geometry.radius, geometry.cy);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(geometry.cx, geometry.cy - geometry.radius);
-    ctx.lineTo(geometry.cx, geometry.cy + geometry.radius);
-    ctx.stroke();
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.beginPath();
-    ctx.arc(geometry.cx, geometry.cy, geometry.radius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(geometry.cx, geometry.cy, geometry.radius, 0, Math.PI * 2);
-    ctx.clip();
 
     const controls = Array.from(controlStates.values()).sort((a, b) => {
       return (a.get('id') ?? 0) - (b.get('id') ?? 0);
     });
 
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.fillRect(0, 0, width, height);
+
     controls.forEach((state) => {
       const id = state.get('id') ?? '?';
-      const xValue = state.get('X') ?? 0;
-      const yValue = state.get('Y') ?? 0;
+      const xValue = clamp01(state.get('X') ?? state.get('x') ?? 0);
+      const yValue = clamp01(state.get('Y') ?? state.get('y') ?? 0);
       const isActive = (state.get('active') ?? 0) > 0;
-      const point = percentToPadPoint(xValue, yValue, geometry);
-      const radius = isActive ? 8 : 5;
-      const haloOpacity = isActive ? 1 : 0.55;
+      const point = {
+        x: (xValue / 100) * width,
+        y: (yValue / 100) * height,
+      };
+      const radius = isActive ? 10 : 7;
+      const haloOpacity = isActive ? 0.9 : 0.6;
 
-      if (proximityRadiusPx > 0) {
-        const proximityGradient = ctx.createRadialGradient(
-          point.x,
-          point.y,
-          0,
-          point.x,
-          point.y,
-          proximityRadiusPx,
-        );
-        proximityGradient.addColorStop(0, `rgba(225, 225, 225, ${0.12 * haloOpacity})`);
-        proximityGradient.addColorStop(0.5, `rgba(190, 190, 190, ${0.09 * haloOpacity})`);
-        proximityGradient.addColorStop(1, 'rgba(170, 170, 170, 0)');
-        ctx.fillStyle = proximityGradient;
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, proximityRadiusPx, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = `rgba(205, 205, 205, ${0.24 * haloOpacity})`;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, proximityRadiusPx, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      const haloGradient = ctx.createRadialGradient(
+        point.x,
+        point.y,
+        0,
+        point.x,
+        point.y,
+        radius * 3,
+      );
+      haloGradient.addColorStop(0, `rgba(180, 220, 255, ${0.35 * haloOpacity})`);
+      haloGradient.addColorStop(1, 'rgba(180, 220, 255, 0)');
+      ctx.fillStyle = haloGradient;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius * 3, 0, Math.PI * 2);
+      ctx.fill();
 
       ctx.beginPath();
-      ctx.fillStyle = isActive ? '#ffffff' : 'rgba(255, 255, 255, 0.45)';
+      ctx.fillStyle = isActive ? '#ffffff' : 'rgba(255, 255, 255, 0.55)';
       ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-      ctx.font = '10px sans-serif';
-      ctx.fillText(`${id}`, point.x + 10, point.y - 8);
+      ctx.fillStyle = '#e9f1ff';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(`${id}`, point.x + radius + 4, point.y - radius);
     });
-
-    ctx.restore();
   }
 
   function renderApp() {
-    const collisionDistance = Number(global.get('collision_distance') ?? 1.5);
-    const proximityOffset = Number(global.get('proximity_offset') ?? 10);
-    const safeCollisionDistance = Number.isFinite(collisionDistance) ? collisionDistance : 1.5;
-    const safeProximityOffset = Number.isFinite(proximityOffset) ? proximityOffset : 10;
-    const proximityDistance = safeCollisionDistance + safeProximityOffset;
+    const sortedUsers = Array.from(userStates.values()).sort((a, b) => (a.get('id') ?? 0) - (b.get('id') ?? 0));
+    const user1 = sortedUsers[0];
+    const user2 = sortedUsers[1];
+    const formatScore = (userState) => {
+      const raw = userState?.get?.('score');
+      const val = Number(raw);
+      return Number.isFinite(val) ? val.toFixed(2) : '0.00';
+    };
 
     render(html`
       <div id="app-root" class="cloud-app controller-cloud-app">
         <div class="cloud-layer cloud-layer-a"></div>
         <div class="cloud-layer cloud-layer-b"></div>
         <div class="cloud-layer cloud-layer-c"></div>
-        <div class="controller-layout">
-          <div class="controller-center">
-            <section>
-              <h2>Playground</h2>
-              <div class="control-frame controller-pad-frame">
-                <canvas id="controller-pad" width="420" height="420"></canvas>
-              </div>
-            </section>
+        <canvas id="controller-pad"></canvas>
+        <div class="display-scoreboard" aria-live="polite">
+          <div class="score-entry">
+            <span class="score-label">Player 1</span>
+            <span class="score-value">${formatScore(user1)}</span>
+          </div>
+          <div class="score-entry">
+            <span class="score-label">Player 2</span>
+            <span class="score-value">${formatScore(user2)}</span>
           </div>
         </div>
       </div>
@@ -212,6 +132,20 @@ async function main($container) {
   });
 
   global.onUpdate(() => {
+    renderApp();
+  });
+
+  userCollection.onAttach((state) => {
+    userStates.set(state.id, state);
+    renderApp();
+  }, true);
+
+  userCollection.onDetach((state) => {
+    userStates.delete(state.id);
+    renderApp();
+  });
+
+  userCollection.onChange(() => {
     renderApp();
   });
 

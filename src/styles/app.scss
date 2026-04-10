@@ -808,12 +808,15 @@ a:hover {
 }
 
 #controller-pad {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  border-radius: 50%;
+  border: none;
+  border-radius: 0;
   display: block;
-  background-color: rgba(0, 0, 0, 0.35);
+  background-color: transparent;
+  z-index: 3;
 }
 
 .pad-hint {
@@ -870,6 +873,45 @@ a:hover {
     radial-gradient(90vmax 70vmax at 20% 65%, rgba(255, 226, 231, 0.78) 0%, rgba(255, 226, 231, 0) 70%),
     radial-gradient(120vmax 80vmax at 78% 18%, rgba(178, 142, 214, 0.68) 0%, rgba(178, 142, 214, 0) 72%),
     linear-gradient(165deg, var(--cloud-bg-3) 0%, var(--cloud-bg-2) 38%, var(--cloud-bg-1) 68%, #f7dde1 100%);
+}
+
+#app-root .display-scoreboard {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, rgba(6, 6, 8, 0) 0%, rgba(6, 6, 8, 0.78) 35%, rgba(6, 6, 8, 0.92) 100%);
+  color: #f7f9fc;
+  font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  z-index: 50;
+  backdrop-filter: blur(6px);
+}
+
+.display-scoreboard .score-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.display-scoreboard .score-label {
+  text-transform: uppercase;
+  font-size: 12px;
+  color: rgba(247, 249, 252, 0.75);
+}
+
+.display-scoreboard .score-value {
+  font-size: 18px;
+  color: #ffffff;
 }
 
 #app-root.cloud-app::after {
