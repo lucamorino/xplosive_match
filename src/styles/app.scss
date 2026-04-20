@@ -751,6 +751,7 @@ a:hover {
 }
 
 .controller-pad-frame {
+  position: relative;
   width: 100%;
   max-width: min(100%, 70vh);
   aspect-ratio: 1 / 1;
@@ -758,6 +759,7 @@ a:hover {
   margin-top: 6px;
   flex: 0 0 auto;
   align-self: center;
+  overflow: hidden;
 }
 
 #player-motion-pad {
@@ -817,6 +819,7 @@ a:hover {
   display: block;
   background-color: transparent;
   z-index: 3;
+  pointer-events: none;
 }
 
 .pad-hint {

@@ -94,6 +94,7 @@ async function main($container) {
   let isTrainingMode = false;
   let sensorLogWriter = null;
   let sensorLogTimerId = null;
+  let sensorLogShouldWrite = false;
   const LOG_SAMPLE_INTERVAL_MS = 100;
   let latestAccel = { x: 0, y: 0, z: 0 };
   let latestSharpness = null;
@@ -167,7 +168,7 @@ async function main($container) {
   };
 
   function writeSensorSample(syncInstance) {
-    if (!loggingActive || !sensorLogWriter) {
+    if (!loggingActive || !sensorLogShouldWrite || !sensorLogWriter) {
       return;
     }
     const time = syncInstance?.getSyncTime ? syncInstance.getSyncTime() : performance.now();
@@ -176,9 +177,9 @@ async function main($container) {
       accelerometer: {
         x: Number(latestAccel.x) || 0,
         y: Number(latestAccel.y) || 0,
-        // z: Number(latestAccel.z) || 0,
       },
       sharpness: Number.isFinite(latestSharpness) ? latestSharpness : null,
+      score: Number(user?.get('score')) || 0,
     });
   }
 
@@ -186,6 +187,8 @@ async function main($container) {
     if (!loggingActive || sensorLogTimerId !== null) {
       return;
     }
+    sensorLogShouldWrite = true;
+    writeSensorSample(syncInstance);
     sensorLogTimerId = window.setInterval(
       () => writeSensorSample(syncInstance),
       LOG_SAMPLE_INTERVAL_MS,
@@ -193,9 +196,19 @@ async function main($container) {
   }
 
   function stopSensorLogTimer() {
+    sensorLogShouldWrite = false;
     if (sensorLogTimerId !== null) {
       window.clearInterval(sensorLogTimerId);
       sensorLogTimerId = null;
+    }
+    sensorLogWriter?.flush?.();
+  }
+
+  function syncSensorLogTimerWithRunning(running, syncInstance) {
+    if (running) {
+      startSensorLogTimer(syncInstance);
+    } else {
+      stopSensorLogTimer();
     }
   }
 
@@ -323,7 +336,6 @@ async function main($container) {
   const scheduler = new Scheduler(() => sync.getSyncTime(), { 
     currentTimeToProcessorTimeFunction: syncTime => sync.getLocalTime(syncTime), 
   });
-  startSensorLogTimer(sync);
   window.addEventListener('beforeunload', stopSensorLogTimer);
   window.addEventListener('pagehide', stopSensorLogTimer);
 
@@ -331,6 +343,7 @@ async function main($container) {
   const index = checkin.getIndex();
   //const instr = checkin.getData();
   const global = await client.stateManager.attach('global');
+  syncSensorLogTimerWithRunning(Boolean(global.get('running')), sync);
   isTrainingMode = Boolean(global.get('training'));
   const userCollection = await client.stateManager.getCollection('user');
   user = await client.stateManager.create('user');
@@ -724,6 +737,7 @@ async function main($container) {
       debugLog('Running state updated:', isRunning);
       sendMessageToInport(device, 'start', isRunning ? [1] : [0]);
       showEndgameOverlay(!isRunning);
+      syncSensorLogTimerWithRunning(Boolean(isRunning), sync);
     }
     /* if ('penalty' in updates) {
       const penalty = updates['penalty'];

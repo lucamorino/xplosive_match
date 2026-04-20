@@ -116,8 +116,10 @@ const global = await server.stateManager.create('global');
 const logger = await server.pluginManager.get('logger');
 const writer = await logger.createWriter('server_Global-Param-log');
 const logger_active = true; //true; --- IGNORE ---
+let writerActive = Boolean(global.get('running'));
+
 function writeLog(payload) {
-  if (!logger_active || !writer) {
+  if (!logger_active || !writer || !writerActive) {
     return;
   }
   writer.write(payload);
@@ -375,8 +377,11 @@ global.onUpdate(updates => {
     console.log(triggerTime);
     
     if (running) {
+      writerActive = true;
       global.set({ syncTriggerTime: triggerTime });
       console.log(`Running state ON at syncTime ${triggerTime}`);
+    } else {
+      writerActive = false;
     }
     writeLog({ running: global.get('running'), syncTriggerTime: global.get('syncTriggerTime') });
 
@@ -396,8 +401,8 @@ global.onUpdate(updates => {
   }
   if ('alarm' in updates) {
     //evaluateCollisions();
-     const triggerTime = syncTime + sync.getLocalTime();
+    const triggerTime = syncTime + sync.getLocalTime();
     global.set({ syncTriggerTime: triggerTime });
-    writeLog({ alarm: global.get('alarm'), syncTriggerTime: global.get('syncTriggerTime')});
+    writeLog({ alarm: global.get('alarm'), syncTriggerTime: global.get('syncTriggerTime') });
   }
 }, true);

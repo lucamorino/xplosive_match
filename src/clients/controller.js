@@ -95,6 +95,9 @@ async function main($container) {
 
   const sync = await client.pluginManager.get('sync');
   const syncTime = sync.getSyncTime();
+  const AUTOMATION_MIN_INTERVAL_MS = 3000;
+  const AUTOMATION_MAX_INTERVAL_MS = 25000;
+  let automationTimerId = null;
   
 
   const userStates = new Map();
@@ -135,7 +138,7 @@ async function main($container) {
   }
 
   function writeUsersParameters(event, time) {
-    if (!logger_active) {
+    if (!logger_active || !global.get('running')) {
       return;
     }
     writer.write({
@@ -143,6 +146,42 @@ async function main($container) {
       time,
       users: collectUsersParameters(),
     });
+  }
+
+  function getRandomAutomationInterval() {
+    const range = AUTOMATION_MAX_INTERVAL_MS - AUTOMATION_MIN_INTERVAL_MS;
+    return AUTOMATION_MIN_INTERVAL_MS + Math.round(Math.random() * range);
+  }
+
+  function shouldRunAlarmAutomation() {
+    return Boolean(global.get('automation')) && Boolean(global.get('running'));
+  }
+
+  function stopAlarmAutomation() {
+    if (automationTimerId !== null) {
+      window.clearTimeout(automationTimerId);
+      automationTimerId = null;
+    }
+  }
+
+  function scheduleAlarmAutomation() {
+    stopAlarmAutomation();
+
+    if (!shouldRunAlarmAutomation()) {
+      return;
+    }
+
+    automationTimerId = window.setTimeout(() => {
+      automationTimerId = null;
+
+      if (!shouldRunAlarmAutomation()) {
+        return;
+      }
+
+      const isAlarmEnabled = Number(global.get('alarm') ?? 0) > 0;
+      global.set({ alarm: isAlarmEnabled ? 0 : 1 });
+      scheduleAlarmAutomation();
+    }, getRandomAutomationInterval());
   }
 
   userCollection.onAttach((state) => {
@@ -335,6 +374,7 @@ async function main($container) {
     const isRunning = global.get('running');
     const isAlarmEnabled = Number(global.get('alarm') ?? 1) > 0;
     const isTrainingEnabled = Boolean(global.get('training'));
+    const isAutomationEnabled = Boolean(global.get('automation'));
     //const globalIsRunning = Boolean(global.get('running'));
     const collisionDistance = Number(global.get('collision_distance') ?? 1.5);
     const proximityOffset = Number(global.get('proximity_offset') ?? 10);
@@ -415,6 +455,18 @@ async function main($container) {
                     .checked="${isAlarmEnabled}"
                     @change="${(event) => {
                       global.set({ alarm: event.target.checked ? 1 : 0 });
+                    }}"
+                  />
+                  <span class="toggle-indicator"></span>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle-label">AUTOMATION</span>
+                  <input
+                    class="toggle-input"
+                    type="checkbox"
+                    .checked="${isAutomationEnabled}"
+                    @change="${(event) => {
+                      global.set({ automation: event.target.checked });
                     }}"
                   />
                   <span class="toggle-indicator"></span>
@@ -678,9 +730,20 @@ async function main($container) {
   }
 
   renderApp();
-  global.onUpdate(() => {
+  global.onUpdate((updates) => {
     renderApp();
+    if ('running' in updates) {
+      if (updates.running) {
+        writeUsersParameters('running-start', sync.getLocalTime());
+      } else {
+        writer.flush?.();
+      }
+    }
+    if ('running' in updates || 'automation' in updates) {
+      scheduleAlarmAutomation();
+    }
   });
+  scheduleAlarmAutomation();
   userCollection.onChange(() => {
     const localTime = sync.getLocalTime();
     renderApp();

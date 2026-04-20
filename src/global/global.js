@@ -8,6 +8,10 @@ export default {
     type: 'boolean',
     default: false,
   },
+  automation: {
+    type: 'boolean',
+    default: false,
+  },
   syncTriggerTime: {
     type: 'float',
     default: 0,
